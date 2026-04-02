@@ -24,6 +24,57 @@ set
   base_price = excluded.base_price,
   image_url = excluded.image_url;
 
+create table if not exists public.daily_feature (
+  id integer primary key check (id = 1),
+  title text not null default '',
+  description text not null default '',
+  dose text not null default '',
+  extraction_time text not null default '',
+  brew_temp text not null default '',
+  guest_score text not null default '',
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.today_at_bar (
+  id integer primary key check (id = 1),
+  title text not null default '',
+  description text not null default '',
+  dose text not null default '',
+  extraction_time text not null default '',
+  brew_temp text not null default '',
+  guest_score text not null default '',
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.today_highlights (
+  id uuid primary key default gen_random_uuid(),
+  menu_item_id uuid not null references public.menu_items(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (menu_item_id)
+);
+
+insert into public.daily_feature (id, title, description, dose, extraction_time, brew_temp, guest_score)
+values (1, 'Daily Signature', 'Owner notes for today.', '18g', '27s', '92C', '4.8/5')
+on conflict (id) do nothing;
+
+insert into public.today_at_bar (id, title, description, dose, extraction_time, brew_temp, guest_score)
+values (
+  1,
+  'Today at the Bar',
+  'Single-origin Ethiopia on slow pour, plus our house espresso blend with cacao and citrus finish.',
+  '18g',
+  '27s',
+  '92C',
+  '4.9/5'
+)
+on conflict (id) do nothing;
+
+insert into public.today_highlights (menu_item_id)
+select id
+from public.menu_items
+where lower(name) in ('spanish latte', 'sea salt mocha', 'orange cold brew', 'butter croissant')
+on conflict (menu_item_id) do nothing;
+
 create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
   customer_name text not null,
@@ -164,6 +215,38 @@ begin
   end if;
 end $$;
 
+create or replace function public.touch_daily_feature_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_touch_daily_feature_updated_at on public.daily_feature;
+create trigger trg_touch_daily_feature_updated_at
+before update on public.daily_feature
+for each row
+execute function public.touch_daily_feature_updated_at();
+
+create or replace function public.touch_today_at_bar_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_touch_today_at_bar_updated_at on public.today_at_bar;
+create trigger trg_touch_today_at_bar_updated_at
+before update on public.today_at_bar
+for each row
+execute function public.touch_today_at_bar_updated_at();
+
 create or replace function public.archive_pickup_orders()
 returns trigger
 language plpgsql
@@ -276,6 +359,9 @@ where order_type = 'pickup'
   and status in ('completed', 'cancelled');
 
 alter table public.menu_items enable row level security;
+alter table public.daily_feature enable row level security;
+alter table public.today_at_bar enable row level security;
+alter table public.today_highlights enable row level security;
 alter table public.orders enable row level security;
 alter table public.orders_archive enable row level security;
 
@@ -285,6 +371,79 @@ on public.menu_items
 for select
 to anon, authenticated
 using (true);
+
+drop policy if exists "Dashboard can insert menu items" on public.menu_items;
+create policy "Dashboard can insert menu items"
+on public.menu_items
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "Dashboard can delete menu items" on public.menu_items;
+create policy "Dashboard can delete menu items"
+on public.menu_items
+for delete
+to anon, authenticated
+using (true);
+
+drop policy if exists "Dashboard can update menu images" on public.menu_items;
+create policy "Dashboard can update menu images"
+on public.menu_items
+for update
+to anon, authenticated
+using (true)
+with check (true);
+
+drop policy if exists "Today highlights are readable by everyone" on public.today_highlights;
+create policy "Today highlights are readable by everyone"
+on public.today_highlights
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Dashboard can insert today highlights" on public.today_highlights;
+create policy "Dashboard can insert today highlights"
+on public.today_highlights
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "Dashboard can delete today highlights" on public.today_highlights;
+create policy "Dashboard can delete today highlights"
+on public.today_highlights
+for delete
+to anon, authenticated
+using (true);
+
+drop policy if exists "Daily feature is readable by everyone" on public.daily_feature;
+create policy "Daily feature is readable by everyone"
+on public.daily_feature
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Dashboard can update daily feature" on public.daily_feature;
+create policy "Dashboard can update daily feature"
+on public.daily_feature
+for update
+to anon, authenticated
+using (id = 1)
+with check (id = 1);
+
+drop policy if exists "Today at the bar is readable by everyone" on public.today_at_bar;
+create policy "Today at the bar is readable by everyone"
+on public.today_at_bar
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Dashboard can update today at the bar" on public.today_at_bar;
+create policy "Dashboard can update today at the bar"
+on public.today_at_bar
+for update
+to anon, authenticated
+using (id = 1)
+with check (id = 1);
 
 drop policy if exists "Anyone can insert an order" on public.orders;
 create policy "Anyone can insert an order"
@@ -320,6 +479,11 @@ using (true);
 
 grant usage on schema public to anon, authenticated;
 grant select on table public.menu_items to anon, authenticated;
+grant insert, delete on table public.menu_items to anon, authenticated;
+grant update(image_url) on table public.menu_items to anon, authenticated;
+grant select, update on table public.daily_feature to anon, authenticated;
+grant select, update on table public.today_at_bar to anon, authenticated;
+grant select, insert, delete on table public.today_highlights to anon, authenticated;
 grant insert on table public.orders to anon, authenticated;
 grant select on table public.orders to anon, authenticated;
 grant update(status) on table public.orders to anon, authenticated;

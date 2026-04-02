@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Hero,
   Navbar,
@@ -30,8 +30,9 @@ type CheckoutStep = "cart" | "payment" | "tracking";
 const ORDER_DRAFT_STORAGE_KEY = "espressonism-order-draft-v1";
 const ORDER_HISTORY_STORAGE_KEY = "espressonism-order-history-v1";
 const ORDER_HISTORY_LIMIT = 12;
+const HISTORY_EDGE_OPEN_RATIO = 0.45;
 
-const HIGHLIGHT_ITEM_NAMES = new Set([
+const DEFAULT_HIGHLIGHT_ITEM_NAMES = new Set([
   "spanish latte",
   "sea salt mocha",
   "orange cold brew",
@@ -59,6 +60,10 @@ interface MenuItemRow {
   description: string | null;
   base_price: number | string;
   image_url: string | null;
+}
+
+interface TodayHighlightRow {
+  menu_item_id: string | null;
 }
 
 interface ToastMessage {
@@ -95,6 +100,15 @@ interface OrderHistoryEntry extends SubmittedOrderSnapshot {
   orderType: OrderType;
 }
 
+interface HistorySwipeState {
+  pointerId: number | null;
+  startY: number;
+  startOffset: number;
+  currentOffset: number;
+  moved: boolean;
+  active: boolean;
+}
+
 function isOrderType(value: unknown): value is OrderType {
   return value === "pickup" || value === "delivery";
 }
@@ -127,6 +141,7 @@ function mapMenuRowToItem(row: MenuItemRow): MenuItem {
     description: row.description?.trim() || "Crafted fresh for your next coffee break.",
     price: Number.isFinite(parsedPrice) ? parsedPrice : 0,
     category: inferMenuCategory(row.name),
+    imageUrl: row.image_url,
     note: MENU_NOTES[normalizedName]
   };
 }
@@ -156,6 +171,8 @@ function isCartLine(value: unknown): value is CartLine {
   if (!value || typeof value !== "object") return false;
 
   const line = value as Partial<CartLine>;
+  const hasValidImageUrl = line.imageUrl === undefined || line.imageUrl === null || typeof line.imageUrl === "string";
+
   return (
     typeof line.id === "string" &&
     typeof line.itemId === "string" &&
@@ -168,7 +185,8 @@ function isCartLine(value: unknown): value is CartLine {
     Number.isInteger(line.quantity) &&
     line.quantity > 0 &&
     isSizeOption(line.size) &&
-    isMilkOption(line.milk)
+    isMilkOption(line.milk) &&
+    hasValidImageUrl
   );
 }
 
@@ -244,6 +262,22 @@ function upsertOrderHistory(history: OrderHistoryEntry[], entry: OrderHistoryEnt
   return [entry, ...deduped].slice(0, ORDER_HISTORY_LIMIT);
 }
 
+function mergeCartLines(existingLines: CartLine[], nextLines: CartLine[]): CartLine[] {
+  const mergedLines = existingLines.map((line) => ({ ...line }));
+
+  nextLines.forEach((incomingLine) => {
+    const matchingLine = mergedLines.find((line) => line.id === incomingLine.id);
+    if (matchingLine) {
+      matchingLine.quantity += incomingLine.quantity;
+      return;
+    }
+
+    mergedLines.push({ ...incomingLine });
+  });
+
+  return mergedLines;
+}
+
 function orderStatusLabel(status: OrderStatus): string {
   if (status === "received") return "Received";
   if (status === "brewing") return "Preparing";
@@ -257,6 +291,8 @@ export default function OrderPage() {
   const [menuData, setMenuData] = useState<MenuItem[]>([]);
   const [isMenuLoading, setIsMenuLoading] = useState(true);
   const [menuError, setMenuError] = useState<string | null>(null);
+  const [highlightItemIds, setHighlightItemIds] = useState<string[]>([]);
+  const [isHighlightsLoading, setIsHighlightsLoading] = useState(true);
 
   const [cartLines, setCartLines] = useState<CartLine[]>([]);
   const [pickupWindow, setPickupWindow] = useState("in-10");
@@ -278,6 +314,9 @@ export default function OrderPage() {
   const [orderHistory, setOrderHistory] = useState<OrderHistoryEntry[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [restoringOrderId, setRestoringOrderId] = useState<string | null>(null);
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
+  const [historyDrawerDragOffset, setHistoryDrawerDragOffset] = useState<number | null>(null);
+  const [historyDrawerClosedOffset, setHistoryDrawerClosedOffset] = useState(0);
 
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [selectedSize, setSelectedSize] = useState<SizeOption>("regular");
@@ -289,6 +328,17 @@ export default function OrderPage() {
 
   const previousCartCountRef = useRef(0);
   const skipNextCartBumpRef = useRef(false);
+  const historyDrawerRef = useRef<HTMLElement | null>(null);
+  const historyHandleRef = useRef<HTMLButtonElement | null>(null);
+  const historySwipeStateRef = useRef<HistorySwipeState>({
+    pointerId: null,
+    startY: 0,
+    startOffset: 0,
+    currentOffset: 0,
+    moved: false,
+    active: false
+  });
+  const suppressHistoryHandleClickRef = useRef(false);
 
   const filteredItems = useMemo(() => {
     if (activeCategory === "all") return menuData;
@@ -301,6 +351,9 @@ export default function OrderPage() {
       return acc;
     }, {});
   }, [cartLines]);
+
+  const historyDrawerSnapOffset = isHistoryDrawerOpen ? 0 : historyDrawerClosedOffset;
+  const historyDrawerOffset = historyDrawerDragOffset ?? historyDrawerSnapOffset;
 
   const cartCount = useMemo(
     () => cartLines.reduce((sum, line) => sum + line.quantity, 0),
@@ -316,10 +369,16 @@ export default function OrderPage() {
   const grandTotal = subtotal + serviceFee;
 
   const highlightItems = useMemo(() => {
-    const preferredItems = menuData.filter((item) => HIGHLIGHT_ITEM_NAMES.has(item.name.toLowerCase()));
+    if (highlightItemIds.length > 0) {
+      const highlightSet = new Set(highlightItemIds);
+      const configuredItems = menuData.filter((item) => highlightSet.has(item.id));
+      if (configuredItems.length > 0) return configuredItems;
+    }
+
+    const preferredItems = menuData.filter((item) => DEFAULT_HIGHLIGHT_ITEM_NAMES.has(item.name.toLowerCase()));
     if (preferredItems.length > 0) return preferredItems.slice(0, 4);
     return menuData.slice(0, 4);
-  }, [menuData]);
+  }, [highlightItemIds, menuData]);
 
   const modifierFinalPrice = useMemo(() => {
     if (!selectedItem) return 0;
@@ -362,6 +421,34 @@ export default function OrderPage() {
     };
 
     void fetchMenuItems();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchTodayHighlights = async () => {
+      setIsHighlightsLoading(true);
+
+      const { data, error } = await supabase
+        .from("today_highlights")
+        .select("menu_item_id")
+        .order("created_at", { ascending: true });
+
+      if (!isMounted) return;
+
+      if (!error) {
+        const nextIds = [...new Set(((data ?? []) as TodayHighlightRow[]).map((row) => row.menu_item_id).filter(Boolean))] as string[];
+        setHighlightItemIds(nextIds);
+      }
+
+      setIsHighlightsLoading(false);
+    };
+
+    void fetchTodayHighlights();
 
     return () => {
       isMounted = false;
@@ -435,6 +522,37 @@ export default function OrderPage() {
 
     window.localStorage.setItem(ORDER_HISTORY_STORAGE_KEY, JSON.stringify(orderHistory));
   }, [orderHistory]);
+
+  useEffect(() => {
+    if (orderHistory.length > 0) return;
+    setIsHistoryDrawerOpen(false);
+    setHistoryDrawerDragOffset(null);
+  }, [orderHistory.length]);
+
+  useEffect(() => {
+    if (orderHistory.length === 0) return;
+
+    const updateHistoryDrawerClosedOffset = () => {
+      const drawerElement = historyDrawerRef.current;
+      if (!drawerElement) return;
+
+      const drawerHeight = drawerElement.getBoundingClientRect().height;
+      const measuredHandleHeight = historyHandleRef.current?.getBoundingClientRect().height ?? 0;
+      const visibleHandleHeight = measuredHandleHeight > 0 ? measuredHandleHeight : 36;
+      const computedBottomRaw = window.getComputedStyle(drawerElement).bottom;
+      const computedBottom = Number.parseFloat(computedBottomRaw);
+      const bottomAnchorOffset = Number.isFinite(computedBottom) ? computedBottom : 0;
+      const closedOffset = Math.max(0, drawerHeight - visibleHandleHeight + bottomAnchorOffset);
+      setHistoryDrawerClosedOffset(closedOffset);
+    };
+
+    updateHistoryDrawerClosedOffset();
+    window.addEventListener("resize", updateHistoryDrawerClosedOffset);
+
+    return () => {
+      window.removeEventListener("resize", updateHistoryDrawerClosedOffset);
+    };
+  }, [orderHistory.length]);
 
   useEffect(() => {
     if (skipNextCartBumpRef.current) {
@@ -531,7 +649,8 @@ export default function OrderPage() {
             unitPrice,
             quantity: 1,
             size,
-            milk
+            milk,
+            imageUrl: item.imageUrl ?? null
           }
         ];
       }
@@ -626,7 +745,8 @@ export default function OrderPage() {
       unit_price: line.unitPrice,
       quantity: line.quantity,
       size: line.size,
-      milk: line.milk
+      milk: line.milk,
+      image_url: line.imageUrl ?? null
     }));
 
     const orderInsertPayload = {
@@ -687,15 +807,80 @@ export default function OrderPage() {
     setIsCheckingOut(false);
   };
 
-  const handleAdvanceForTesting = () => {
-    setOrderStatus((previousStatus) => {
-      if (previousStatus === "received") return "brewing";
-      if (previousStatus === "brewing") return "ready";
-      return previousStatus;
-    });
+  const resetHistorySwipeState = () => {
+    historySwipeStateRef.current = {
+      pointerId: null,
+      startY: 0,
+      startOffset: 0,
+      currentOffset: 0,
+      moved: false,
+      active: false
+    };
   };
 
-  const restoreOrderFromHistory = async (entry: OrderHistoryEntry, destination: "tracking" | "receipt") => {
+  const handleHistoryDrawerToggle = () => {
+    if (suppressHistoryHandleClickRef.current) {
+      suppressHistoryHandleClickRef.current = false;
+      return;
+    }
+
+    setIsHistoryDrawerOpen((isOpen) => !isOpen);
+    setHistoryDrawerDragOffset(null);
+  };
+
+  const handleHistoryHandlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (orderHistory.length === 0 || historyDrawerClosedOffset <= 0) return;
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    historySwipeStateRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startOffset: historyDrawerOffset,
+      currentOffset: historyDrawerOffset,
+      moved: false,
+      active: true
+    };
+    setHistoryDrawerDragOffset(historyDrawerOffset);
+  };
+
+  const handleHistoryHandlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const swipeState = historySwipeStateRef.current;
+    if (!swipeState.active || swipeState.pointerId !== event.pointerId) return;
+
+    const delta = event.clientY - swipeState.startY;
+    const nextOffset = Math.min(
+      historyDrawerClosedOffset,
+      Math.max(0, swipeState.startOffset + delta)
+    );
+
+    swipeState.currentOffset = nextOffset;
+    if (!swipeState.moved && Math.abs(delta) > 6) {
+      swipeState.moved = true;
+    }
+
+    setHistoryDrawerDragOffset(nextOffset);
+  };
+
+  const handleHistoryHandlePointerEnd = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const swipeState = historySwipeStateRef.current;
+    if (!swipeState.active || swipeState.pointerId !== event.pointerId) return;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    const shouldOpen = swipeState.currentOffset <= historyDrawerClosedOffset * HISTORY_EDGE_OPEN_RATIO;
+    setIsHistoryDrawerOpen(shouldOpen);
+    setHistoryDrawerDragOffset(null);
+
+    if (swipeState.moved) {
+      suppressHistoryHandleClickRef.current = true;
+    }
+
+    resetHistorySwipeState();
+  };
+
+  const restoreOrderFromHistory = async (entry: OrderHistoryEntry) => {
     setHistoryError(null);
     setRestoringOrderId(entry.orderId);
 
@@ -741,9 +926,29 @@ export default function OrderPage() {
     setOrderStatus(hydratedEntry.status);
     setOrderPlaced(true);
     setCheckoutStep("tracking");
-    setShowReceipt(destination === "receipt");
+    setShowReceipt(true);
     setIsCartOpen(false);
+    setIsHistoryDrawerOpen(false);
+    setHistoryDrawerDragOffset(null);
     setRestoringOrderId((currentId) => (currentId === entry.orderId ? null : currentId));
+  };
+
+  const handleReorderFromReceipt = () => {
+    if (!submittedOrder || submittedOrder.lines.length === 0) return;
+
+    const linesToReorder = submittedOrder.lines.map((line) => ({ ...line }));
+    setCartLines((previousLines) => mergeCartLines(previousLines, linesToReorder));
+    setOrderPlaced(false);
+    setCheckoutStep("cart");
+    setShowReceipt(false);
+    setCurrentOrderId(null);
+    setSubmittedOrder(null);
+    setOrderStatus("received");
+    setCheckoutError(null);
+    setIsHistoryDrawerOpen(false);
+    setHistoryDrawerDragOffset(null);
+    setIsCartOpen(true);
+    addToast("Items added back to cart.");
   };
 
   const resetOrder = () => {
@@ -850,7 +1055,10 @@ export default function OrderPage() {
                   <h2 className="order-hero-card-title" style={{ marginTop: 0 }}>
                     Today Highlights
                   </h2>
-                  <p className="order-hero-card-copy">Quick tap adds the default build. For custom size and milk, use Customize below.</p>
+                  <p className="order-hero-card-copy">
+                    Quick tap adds the default build. For custom size and milk, use Customize below.
+                  </p>
+
                   {isMenuLoading ? (
                     <p className="order-highlight-meta">Loading live menu...</p>
                   ) : menuError ? (
@@ -878,72 +1086,87 @@ export default function OrderPage() {
                   <p className="order-highlight-meta">
                     Cart now has {cartCount} item{cartCount === 1 ? "" : "s"}.
                   </p>
+                  {isHighlightsLoading ? <p className="order-highlight-meta">Loading today highlights...</p> : null}
                 </>
               }
             />
 
             {orderHistory.length > 0 ? (
-              <section className="order-history-panel" aria-label="Recent order history">
-                <header className="order-history-head">
-                  <div>
+              <aside
+                id="order-history-edge-drawer"
+                ref={historyDrawerRef}
+                className={`order-history-edge-drawer ${historyDrawerDragOffset !== null ? "order-history-edge-drawer-dragging" : ""}`}
+                style={{ transform: `translate3d(0, ${historyDrawerOffset}px, 0)` }}
+                aria-label="Recent order history"
+              >
+                <button
+                  ref={historyHandleRef}
+                  type="button"
+                  className={`order-history-edge-handle ${isHistoryDrawerOpen ? "order-history-edge-handle-open" : ""}`}
+                  aria-expanded={isHistoryDrawerOpen}
+                  aria-controls="order-history-edge-panel"
+                  onClick={handleHistoryDrawerToggle}
+                  onPointerDown={handleHistoryHandlePointerDown}
+                  onPointerMove={handleHistoryHandlePointerMove}
+                  onPointerUp={handleHistoryHandlePointerEnd}
+                  onPointerCancel={handleHistoryHandlePointerEnd}
+                >
+                  <span>{isHistoryDrawerOpen ? "Close" : "History"}</span>
+                </button>
+
+                <section id="order-history-edge-panel" className="order-history-edge-panel">
+                  <header className="order-history-head">
                     <p className="order-kicker">Order History</p>
-                    <h2>Need your receipt again?</h2>
+                    <p>Swipe or tap the edge tab to open and close.</p>
+                  </header>
+
+                  <div className="order-history-body">
+                    {historyError ? (
+                      <p className="order-history-error" role="alert">
+                        {historyError}
+                      </p>
+                    ) : null}
+
+                    <div className="order-history-list" role="list">
+                      {orderHistory.map((entry) => {
+                        const isRestoring = restoringOrderId === entry.orderId;
+                        const createdAtLabel = new Date(entry.createdAt).toLocaleString("en-PH", {
+                          month: "short",
+                          day: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          timeZone: "Asia/Manila"
+                        });
+
+                        return (
+                          <article key={entry.orderId} className="order-history-card" role="listitem">
+                            <div className="order-history-main">
+                              <p className="order-history-id">Order {entry.orderId.slice(0, 8).toUpperCase()}</p>
+                              <p className="order-history-meta">
+                                {createdAtLabel} | {entry.orderType === "delivery" ? "Delivery" : "Pickup"} | {orderStatusLabel(entry.status)}
+                              </p>
+                              <p className="order-history-meta">
+                                {entry.customerName} | PHP {entry.totalPrice.toFixed(2)}
+                              </p>
+                            </div>
+
+                            <div className="order-history-actions">
+                              <button
+                                type="button"
+                                className="order-primary-btn"
+                                onClick={() => void restoreOrderFromHistory(entry)}
+                                disabled={isRestoring}
+                              >
+                                {isRestoring ? "Opening..." : "Open Receipt"}
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <p>Saved on this device for quick access.</p>
-                </header>
-
-                {historyError ? (
-                  <p className="order-history-error" role="alert">
-                    {historyError}
-                  </p>
-                ) : null}
-
-                <div className="order-history-list" role="list">
-                  {orderHistory.map((entry) => {
-                    const isRestoring = restoringOrderId === entry.orderId;
-                    const createdAtLabel = new Date(entry.createdAt).toLocaleString("en-PH", {
-                      month: "short",
-                      day: "2-digit",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      timeZone: "Asia/Manila"
-                    });
-
-                    return (
-                      <article key={entry.orderId} className="order-history-card" role="listitem">
-                        <div className="order-history-main">
-                          <p className="order-history-id">Order {entry.orderId.slice(0, 8).toUpperCase()}</p>
-                          <p className="order-history-meta">
-                            {createdAtLabel} | {entry.orderType === "delivery" ? "Delivery" : "Pickup"} | {orderStatusLabel(entry.status)}
-                          </p>
-                          <p className="order-history-meta">
-                            {entry.customerName} | PHP {entry.totalPrice.toFixed(2)}
-                          </p>
-                        </div>
-
-                        <div className="order-history-actions">
-                          <button
-                            type="button"
-                            className="order-secondary-btn"
-                            onClick={() => void restoreOrderFromHistory(entry, "tracking")}
-                            disabled={isRestoring}
-                          >
-                            {isRestoring ? "Opening..." : "Continue Order"}
-                          </button>
-                          <button
-                            type="button"
-                            className="order-primary-btn"
-                            onClick={() => void restoreOrderFromHistory(entry, "receipt")}
-                            disabled={isRestoring}
-                          >
-                            Open Receipt
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              </section>
+                </section>
+              </aside>
             ) : null}
 
             <section className="order-main-grid order-main-grid-single" id="order-menu" aria-label="Order interface">
@@ -1020,6 +1243,7 @@ export default function OrderPage() {
             totalPrice={submittedOrder.totalPrice}
             paymentMethod={submittedOrder.paymentMethod}
             gcashReference={submittedOrder.gcashReference}
+            onReorder={handleReorderFromReceipt}
             onReset={resetOrder}
           />
         ) : (
@@ -1029,7 +1253,6 @@ export default function OrderPage() {
             orderStatus={orderStatus}
             customerName={customerName || "Guest"}
             specialInstructions={specialInstructions}
-            onAdvanceForTesting={handleAdvanceForTesting}
             onReady={() => setShowReceipt(true)}
             onReset={resetOrder}
           />

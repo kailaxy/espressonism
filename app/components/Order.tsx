@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { useEffect, useMemo, useRef } from "react";
 
 export interface MenuItem {
@@ -6,6 +7,7 @@ export interface MenuItem {
   price: number;
   description: string;
   category: "espresso" | "signature" | "bites";
+  imageUrl?: string | null;
   note?: string;
 }
 
@@ -28,6 +30,24 @@ function getFocusableChildren(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR)).filter(
     (element) => !element.hasAttribute("aria-hidden")
   );
+}
+
+function optimizeMenuImageSource(source: string | null | undefined, width: number): string {
+  if (!source) return "";
+
+  try {
+    const url = new URL(source);
+    if (url.hostname !== "images.unsplash.com") return source;
+
+    url.searchParams.set("auto", "format");
+    url.searchParams.set("fit", "crop");
+    url.searchParams.set("w", String(width));
+    url.searchParams.set("q", "78");
+
+    return url.toString();
+  } catch {
+    return source;
+  }
 }
 
 function useModalKeyboardAndFocusTrap<T extends HTMLElement>(isOpen: boolean, onClose: () => void) {
@@ -138,6 +158,20 @@ export function MenuGrid({ items, quantities, onSelectItem }: MenuGridProps) {
 
         return (
           <article key={item.id} className="order-menu-card-v2">
+            <div className="order-item-image-frame" aria-hidden={!item.imageUrl}>
+              {item.imageUrl ? (
+                <Image
+                  src={optimizeMenuImageSource(item.imageUrl, 960)}
+                  alt={item.name}
+                  className="order-item-image"
+                  fill
+                  sizes="(max-width: 900px) 100vw, 33vw"
+                  unoptimized
+                />
+              ) : (
+                <span className="order-item-image-placeholder">No image</span>
+              )}
+            </div>
             <p className="order-item-category">{item.category}</p>
             <h3>{item.name}</h3>
             <p className="order-item-description">{item.description}</p>
@@ -172,6 +206,7 @@ export interface CartLine {
   quantity: number;
   size: SizeOption;
   milk: MilkOption;
+  imageUrl?: string | null;
 }
 
 interface ModifierModalProps {
@@ -221,6 +256,18 @@ export function ModifierModal({
             X
           </button>
         </header>
+
+        {item.imageUrl ? (
+          <Image
+            src={optimizeMenuImageSource(item.imageUrl, 960)}
+            alt={item.name}
+            className="order-modal-item-image"
+            width={960}
+            height={540}
+            sizes="(max-width: 680px) 100vw, 560px"
+            unoptimized
+          />
+        ) : null}
 
         <p className="order-modal-description">{item.description}</p>
 
@@ -374,10 +421,23 @@ export function CartModal({
           <ul className="order-line-list">
             {lines.map((line) => (
               <li key={line.id}>
-                <div>
-                  <strong>{line.name}</strong>
-                  <span>{line.quantity} x PHP {line.unitPrice.toFixed(2)}</span>
-                  <span className="order-line-modifiers">{formatModifierText(line.size, line.milk)}</span>
+                <div className="order-line-main">
+                  {line.imageUrl ? (
+                    <Image
+                      src={optimizeMenuImageSource(line.imageUrl, 240)}
+                      alt={line.name}
+                      className="order-line-image"
+                      width={48}
+                      height={48}
+                      unoptimized
+                    />
+                  ) : null}
+
+                  <div>
+                    <strong>{line.name}</strong>
+                    <span>{line.quantity} x PHP {line.unitPrice.toFixed(2)}</span>
+                    <span className="order-line-modifiers">{formatModifierText(line.size, line.milk)}</span>
+                  </div>
                 </div>
                 <div className="order-line-actions">
                   <em>PHP {(line.unitPrice * line.quantity).toFixed(2)}</em>
@@ -553,7 +613,6 @@ interface OrderTimelineProps {
   orderStatus: TrackerStatus;
   customerName: string;
   specialInstructions: string;
-  onAdvanceForTesting: () => void;
   onReady: () => void;
   onReset: () => void;
 }
@@ -597,7 +656,6 @@ export function OrderTimeline({
   orderStatus,
   customerName,
   specialInstructions,
-  onAdvanceForTesting,
   onReady,
   onReset
 }: OrderTimelineProps) {
@@ -651,9 +709,6 @@ export function OrderTimeline({
       </div>
 
       <div className="order-timeline-actions">
-        <button type="button" className="order-secondary-btn" onClick={onAdvanceForTesting}>
-          Advance Stage (Test)
-        </button>
         <button type="button" className="order-secondary-btn" onClick={onReset}>
           Start New Order
         </button>
@@ -669,6 +724,7 @@ interface ReceiptViewProps {
   totalPrice: number;
   paymentMethod: PaymentMethod;
   gcashReference: string;
+  onReorder: () => void;
   onReset: () => void;
 }
 
@@ -679,6 +735,7 @@ export function ReceiptView({
   totalPrice,
   paymentMethod,
   gcashReference,
+  onReorder,
   onReset
 }: ReceiptViewProps) {
   const receiptPaperRef = useRef<HTMLElement | null>(null);
@@ -765,8 +822,11 @@ export function ReceiptView({
         <p className="receipt-payment-line">{paymentLine}</p>
 
         <div className="receipt-print-actions">
-          <button type="button" className="order-primary-btn" onClick={handleSaveReceiptAsImage}>
+          <button type="button" className="order-secondary-btn" onClick={handleSaveReceiptAsImage}>
             Save Receipt as Image
+          </button>
+          <button type="button" className="order-primary-btn" onClick={onReorder}>
+            Reorder
           </button>
           <button type="button" className="order-secondary-btn" onClick={onReset}>
             Start New Order

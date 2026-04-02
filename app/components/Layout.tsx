@@ -68,9 +68,11 @@ export function Navbar({ cartCount, onCartClick, hrefPrefix = "" }: NavbarProps)
         <a href={`${hrefPrefix}#visit`} onClick={(event) => handleNavToSection(event, "visit")}>Visit</a>
       </nav>
 
-      <a href="/order" className="cta">
-        Start Ordering
-      </a>
+      <div className="topbar-actions">
+        <a href="/order" className="cta">
+          Start Ordering
+        </a>
+      </div>
     </header>
   );
 }

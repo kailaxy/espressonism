@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
 import { smoothScrollToElement } from "./lib/smoothScroll";
 import orderCtaImage from "../asset/asset1.png";
+// @ts-ignore - Supabase client is intentionally authored in a JavaScript module.
+import { supabase } from "../supabaseClient";
 import {
   Navbar,
   Hero,
@@ -15,6 +17,47 @@ import {
   FeatureGrid,
   VisitSection
 } from "./components";
+
+type TodayAtBarRow = {
+  title: string | null;
+  description: string | null;
+  dose: string | null;
+  extraction_time: string | null;
+  brew_temp: string | null;
+  guest_score: string | number | null;
+};
+
+type TodayAtBarCard = {
+  title: string;
+  description: string;
+  dose: string;
+  extractionTime: string;
+  brewTemp: string;
+  guestScore: string;
+};
+
+const DEFAULT_TODAY_AT_BAR: TodayAtBarCard = {
+  title: "Today at the Bar",
+  description: "Single-origin Ethiopia on slow pour, plus our house espresso blend with cacao and citrus finish.",
+  dose: "18g",
+  extractionTime: "27s",
+  brewTemp: "92C",
+  guestScore: "4.9/5"
+};
+
+function mapTodayAtBarRowToCard(row: TodayAtBarRow | null | undefined): TodayAtBarCard {
+  return {
+    title: row?.title?.trim() || DEFAULT_TODAY_AT_BAR.title,
+    description: row?.description?.trim() || DEFAULT_TODAY_AT_BAR.description,
+    dose: row?.dose?.trim() || DEFAULT_TODAY_AT_BAR.dose,
+    extractionTime: row?.extraction_time?.trim() || DEFAULT_TODAY_AT_BAR.extractionTime,
+    brewTemp: row?.brew_temp?.trim() || DEFAULT_TODAY_AT_BAR.brewTemp,
+    guestScore:
+      row?.guest_score === null || row?.guest_score === undefined || String(row.guest_score).trim() === ""
+        ? DEFAULT_TODAY_AT_BAR.guestScore
+        : String(row.guest_score).trim()
+  };
+}
 
 const loyaltyProgram = {
   title: "Coffee Passport",
@@ -74,6 +117,7 @@ const features = [
 
 export default function Home() {
   const router = useRouter();
+  const [todayAtBar, setTodayAtBar] = useState<TodayAtBarCard>(DEFAULT_TODAY_AT_BAR);
 
   useEffect(() => {
     const items = document.querySelectorAll<HTMLElement>(".reveal-on-scroll");
@@ -104,6 +148,29 @@ export default function Home() {
     }, 80);
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchTodayAtBar = async () => {
+      const { data, error } = await supabase
+        .from("today_at_bar")
+        .select("title, description, dose, extraction_time, brew_temp, guest_score")
+        .eq("id", 1)
+        .maybeSingle();
+
+      if (!isMounted) return;
+      if (!error && data) {
+        setTodayAtBar(mapTodayAtBarRowToCard(data as TodayAtBarRow));
+      }
+    };
+
+    void fetchTodayAtBar();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleExploreSignature = () => {
     const section = document.getElementById("signature");
     if (section) smoothScrollToElement(section);
@@ -127,23 +194,23 @@ export default function Home() {
         ]}
         cardContent={
           <>
-            <h2 style={{ marginTop: 0 }}>Today at the Bar</h2>
-            <p>Single-origin Ethiopia on slow pour, plus our house espresso blend with cacao and citrus finish.</p>
+            <h2 style={{ marginTop: 0 }}>{todayAtBar.title}</h2>
+            <p>{todayAtBar.description}</p>
             <div className="stat-grid">
               <div className="stat">
-                <span className="stat-value">18g</span>
+                <span className="stat-value">{todayAtBar.dose}</span>
                 Dose Per Shot
               </div>
               <div className="stat">
-                <span className="stat-value">27s</span>
+                <span className="stat-value">{todayAtBar.extractionTime}</span>
                 Extraction Time
               </div>
               <div className="stat">
-                <span className="stat-value">92C</span>
+                <span className="stat-value">{todayAtBar.brewTemp}</span>
                 Brew Temp
               </div>
               <div className="stat">
-                <span className="stat-value">4.9/5</span>
+                <span className="stat-value">{todayAtBar.guestScore}</span>
                 Guest Score
               </div>
             </div>
