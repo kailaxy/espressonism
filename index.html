@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Espressonism | Artisanal Coffee Rituals</title>
+  <meta name="description" content="Espressonism crafts bold, modern coffee rituals with small-batch beans and precision brewing." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Antonio:wght@600;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --color-primary: #78350F;
+      --color-secondary: #92400E;
+      --color-cta: #FBBF24;
+      --color-background: #FEF3C7;
+      --color-text: #451A03;
+      --color-paper: #FFF9EB;
+      --space-xs: 0.25rem;
+      --space-sm: 0.5rem;
+      --space-md: 1rem;
+      --space-lg: 1.5rem;
+      --space-xl: 2rem;
+      --space-2xl: 3rem;
+      --space-3xl: 4rem;
+      --radius-sm: 0.5rem;
+      --radius-md: 0.9rem;
+      --radius-lg: 1.2rem;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 8px 18px rgba(69, 26, 3, 0.12);
+      --shadow-lg: 0 20px 40px rgba(69, 26, 3, 0.18);
+      --container: 1200px;
+      --duration-fast: 180ms;
+      --duration-normal: 260ms;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: "DM Sans", "Segoe UI", sans-serif;
+      color: var(--color-text);
+      background:
+        radial-gradient(circle at 20% 0%, rgba(251, 191, 36, 0.25) 0%, transparent 45%),
+        radial-gradient(circle at 100% 100%, rgba(120, 53, 15, 0.2) 0%, transparent 50%),
+        linear-gradient(180deg, #fffdf6 0%, var(--color-background) 45%, #f8e8c7 100%);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .shell {
+      max-width: var(--container);
+      margin: 0 auto;
+      padding: 0 var(--space-md) var(--space-3xl);
+    }
+
+    .topbar {
+      position: sticky;
+      top: var(--space-md);
+      z-index: 20;
+      margin: var(--space-md) auto var(--space-xl);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-md);
+      padding: 0.85rem 1rem;
+      border: 1px solid rgba(120, 53, 15, 0.2);
+      border-radius: 999px;
+      background: rgba(255, 249, 235, 0.9);
+      box-shadow: var(--shadow-md);
+      backdrop-filter: blur(10px);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-sm);
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .brand-mark {
+      width: 1.8rem;
+      height: 1.8rem;
+      color: var(--color-secondary);
+    }
+
+    .menu {
+      display: flex;
+      gap: var(--space-lg);
+      font-size: 0.95rem;
+    }
+
+    .menu a {
+      color: #5f2f12;
+      transition: color var(--duration-fast) ease;
+      cursor: pointer;
+    }
+
+    .menu a:hover,
+    .menu a:focus-visible {
+      color: #1f1207;
+      outline: none;
+    }
+
+    .cta {
+      border: 0;
+      background: var(--color-cta);
+      color: #2b1707;
+      border-radius: 999px;
+      padding: 0.65rem 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition:
+        transform var(--duration-fast) ease,
+        box-shadow var(--duration-fast) ease,
+        filter var(--duration-fast) ease;
+      box-shadow: 0 6px 14px rgba(251, 191, 36, 0.35);
+    }
+
+    .cta:hover,
+    .cta:focus-visible {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+      box-shadow: 0 10px 20px rgba(251, 191, 36, 0.45);
+      outline: none;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: var(--space-xl);
+      align-items: start;
+      margin-top: var(--space-2xl);
+    }
+
+    .hero-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-md);
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      background: rgba(146, 64, 14, 0.12);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .hero-title {
+      margin: 0;
+      font-family: "Antonio", Impact, sans-serif;
+      font-size: clamp(3rem, 9vw, 10.5rem);
+      letter-spacing: -0.05em;
+      line-height: 0.9;
+      text-transform: uppercase;
+      color: #2f1408;
+    }
+
+    .hero-copy {
+      max-width: 42ch;
+      font-size: 1.1rem;
+      margin: var(--space-lg) 0 var(--space-xl);
+      color: #5f2f12;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-sm);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--color-primary);
+      border: 1px solid rgba(120, 53, 15, 0.35);
+      border-radius: 999px;
+      padding: 0.65rem 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background var(--duration-fast) ease;
+    }
+
+    .btn-ghost:hover,
+    .btn-ghost:focus-visible {
+      background: rgba(120, 53, 15, 0.08);
+      outline: none;
+    }
+
+    .hero-card {
+      background: var(--color-paper);
+      border: 1px solid rgba(120, 53, 15, 0.2);
+      border-radius: var(--radius-lg);
+      padding: var(--space-xl);
+      box-shadow: var(--shadow-lg);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-card::after {
+      content: "";
+      position: absolute;
+      right: -30px;
+      bottom: -30px;
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(251, 191, 36, 0.42) 0%, rgba(251, 191, 36, 0) 70%);
+      pointer-events: none;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-md);
+      margin-top: var(--space-lg);
+    }
+
+    .stat {
+      background: white;
+      border: 1px solid rgba(120, 53, 15, 0.15);
+      border-radius: var(--radius-md);
+      padding: 0.85rem;
+    }
+
+    .stat-value {
+      display: block;
+      font-weight: 700;
+      font-size: 1.2rem;
+    }
+
+    .section {
+      margin-top: clamp(3rem, 10vw, 7rem);
+    }
+
+    .section h2 {
+      margin: 0 0 var(--space-sm);
+      font-family: "Antonio", Impact, sans-serif;
+      letter-spacing: -0.03em;
+      font-size: clamp(2rem, 6vw, 4rem);
+      line-height: 0.94;
+      text-transform: uppercase;
+    }
+
+    .section p {
+      margin: 0;
+      color: #5f2f12;
+      max-width: 58ch;
+    }
+
+    .feature-grid {
+      margin-top: var(--space-xl);
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--space-md);
+    }
+
+    .feature {
+      background: var(--color-paper);
+      border: 1px solid rgba(120, 53, 15, 0.2);
+      border-radius: var(--radius-md);
+      padding: var(--space-lg);
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow var(--duration-normal) ease;
+      cursor: pointer;
+    }
+
+    .feature:hover,
+    .feature:focus-within {
+      box-shadow: var(--shadow-md);
+    }
+
+    .feature-icon {
+      width: 1.6rem;
+      height: 1.6rem;
+      color: var(--color-secondary);
+      margin-bottom: var(--space-sm);
+    }
+
+    .feature h3 {
+      margin: 0 0 var(--space-xs);
+    }
+
+    .feature p {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
+    .bottom-cta {
+      margin-top: var(--space-2xl);
+      background: linear-gradient(140deg, #2f1408 0%, #5b290f 100%);
+      color: #ffefcc;
+      border-radius: var(--radius-lg);
+      padding: clamp(1.5rem, 5vw, 3rem);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: var(--space-lg);
+      align-items: center;
+    }
+
+    .bottom-cta p {
+      color: #f3dcae;
+      margin-top: var(--space-sm);
+    }
+
+    .bottom-cta .cta {
+      white-space: nowrap;
+    }
+
+    .mobile-menu-btn {
+      display: none;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      color: var(--color-primary);
+      padding: 0.35rem;
+      border-radius: 0.4rem;
+    }
+
+    .mobile-menu-btn:focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: 2px;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(20px);
+      animation: reveal-up 700ms cubic-bezier(.2, .7, .2, 1) forwards;
+    }
+
+    .reveal-2 {
+      animation-delay: 120ms;
+    }
+
+    .reveal-3 {
+      animation-delay: 240ms;
+    }
+
+    @keyframes reveal-up {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 980px) {
+      .hero {
+        grid-template-columns: 1fr;
+      }
+
+      .feature-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .bottom-cta {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .shell {
+        padding: 0 var(--space-sm) var(--space-3xl);
+      }
+
+      .topbar {
+        border-radius: 1rem;
+      }
+
+      .mobile-menu-btn {
+        display: inline-flex;
+      }
+
+      .menu {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(100% + 0.45rem);
+        margin: 0;
+        padding: 0.8rem;
+        flex-direction: column;
+        gap: var(--space-sm);
+        border: 1px solid rgba(120, 53, 15, 0.2);
+        border-radius: 1rem;
+        background: rgba(255, 249, 235, 0.97);
+        box-shadow: var(--shadow-md);
+        display: none;
+      }
+
+      .menu[data-open="true"] {
+        display: flex;
+      }
+
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .stat-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-copy {
+        font-size: 1rem;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation: none !important;
+        transition-duration: 1ms !important;
+        scroll-behavior: auto !important;
+      }
+
+      .reveal {
+        opacity: 1;
+        transform: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar" aria-label="Main navigation">
+      <a class="brand" href="#home" aria-label="Espressonism home">
+        <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 8.5h11.5a2.5 2.5 0 0 1 0 5H15a5 5 0 0 1-10 0v-5Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 16h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M8 6V4.2M11 6V3.7M14 6V4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        ESPRESSONISM
+      </a>
+      <button class="mobile-menu-btn" id="menu-btn" aria-expanded="false" aria-controls="menu-links" aria-label="Toggle menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <nav id="menu-links" class="menu" aria-label="Section links">
+        <a href="#method">Method</a>
+        <a href="#roasts">Roasts</a>
+        <a href="#visit">Visit</a>
+      </nav>
+      <button class="cta" type="button">Reserve Tasting</button>
+    </header>
+
+    <main id="home" class="hero">
+      <section>
+        <span class="hero-kicker reveal">Small Batch | City Roasted</span>
+        <h1 class="hero-title reveal reveal-2">Brew Loud.</h1>
+        <p class="hero-copy reveal reveal-3">
+          Espressonism turns coffee into a daily ceremony. Precision extraction, expressive flavor notes,
+          and a space designed for people who love bold craft.
+        </p>
+        <div class="hero-actions reveal reveal-3">
+          <button class="cta" type="button">Try Signature Flight</button>
+          <button class="btn-ghost" type="button">Explore Beans</button>
+        </div>
+      </section>
+
+      <aside class="hero-card reveal reveal-2" aria-label="Today highlights">
+        <h2 style="margin-top:0;">Today at the Bar</h2>
+        <p>Single-origin Ethiopia on slow pour, plus our house espresso blend with cacao and citrus finish.</p>
+        <div class="stat-grid">
+          <div class="stat">
+            <span class="stat-value">18g</span>
+            Dose Per Shot
+          </div>
+          <div class="stat">
+            <span class="stat-value">27s</span>
+            Extraction Time
+          </div>
+          <div class="stat">
+            <span class="stat-value">92°C</span>
+            Brew Temp
+          </div>
+          <div class="stat">
+            <span class="stat-value">4.9/5</span>
+            Guest Score
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <section id="method" class="section">
+      <h2>Minimal Ritual. Maximum Flavor.</h2>
+      <p>
+        Every cup follows one principle: remove noise, amplify character. We source directly, roast weekly,
+        and calibrate by taste every morning.
+      </p>
+      <div class="feature-grid" id="roasts">
+        <article class="feature" tabindex="0">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M7 5h10l2 4-7 10L5 9l2-4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          </svg>
+          <h3>Direct Micro Lots</h3>
+          <p>Transparent partnerships with producers we know by name.</p>
+        </article>
+        <article class="feature" tabindex="0">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 4v16M6 8l6-4 6 4M6 16l6 4 6-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <h3>Profiled Roasting</h3>
+          <p>Curve-driven roast development tuned for sweetness and clarity.</p>
+        </article>
+        <article class="feature" tabindex="0">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 13h8l2-3 2 6 2-3h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <h3>Precision Brewing</h3>
+          <p>Daily calibration for grind, dose, and flow to keep every cup consistent.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="visit" class="section">
+      <div class="bottom-cta">
+        <div>
+          <h2 style="margin: 0;">Taste The New Roast Drop</h2>
+          <p>Join this weekend for guided flights, roast lab tours, and brewing classes.</p>
+        </div>
+        <button class="cta" type="button">Book a Seat</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      var btn = document.getElementById("menu-btn");
+      var menu = document.getElementById("menu-links");
+      if (!btn || !menu) return;
+
+      btn.addEventListener("click", function () {
+        var open = menu.getAttribute("data-open") === "true";
+        menu.setAttribute("data-open", open ? "false" : "true");
+        btn.setAttribute("aria-expanded", open ? "false" : "true");
+      });
+    })();
+  </script>
+</body>
+</html>
