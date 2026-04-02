@@ -2814,6 +2814,11 @@ a {
   outline: none;
 }
 
+.barista-manager-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .barista-manager-form {
   border: 1px solid rgba(251, 191, 36, 0.18);
   border-radius: 0.9rem;
@@ -3038,6 +3043,11 @@ a {
   padding: 1rem;
   display: grid;
   gap: 0.9rem;
+}
+
+.barista-manager-modal {
+  width: min(640px, 100%);
+  max-height: min(88vh, 760px);
 }
 
 .barista-image-modal-head {

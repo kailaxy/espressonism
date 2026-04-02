@@ -7,22 +7,59 @@ create table if not exists public.menu_items (
   name text not null unique,
   description text not null default '',
   base_price numeric(10, 2) not null check (base_price >= 0),
-  image_url text
+  image_url text,
+  category text not null default 'signature' check (category in ('espresso', 'signature', 'bites'))
 );
 
-insert into public.menu_items (name, description, base_price, image_url)
+alter table public.menu_items
+  add column if not exists category text not null default 'signature';
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'menu_items_category_check'
+      and conrelid = 'public.menu_items'::regclass
+  ) then
+    alter table public.menu_items
+      add constraint menu_items_category_check
+      check (category in ('espresso', 'signature', 'bites'));
+  end if;
+end $$;
+
+insert into public.menu_items (name, description, base_price, image_url, category)
 values
-  ('Double Espresso', 'Two bold shots with dark cocoa notes.', 90.00, 'https://images.unsplash.com/photo-1510707577719-ae7c14805e2e'),
-  ('Americano Black', 'Extended espresso with hot water and extra aroma.', 100.00, 'https://images.unsplash.com/photo-1494314671902-399b18174975'),
-  ('Piccolo Latte', 'Compact milk coffee with rich body.', 120.00, 'https://images.unsplash.com/photo-1529447197861-3f296e5d7f84'),
-  ('Spanish Latte', 'Silky espresso with condensed milk sweetness.', 145.00, 'https://images.unsplash.com/photo-1509042239860-f550ce710b93'),
-  ('Sea Salt Mocha', 'Chocolate espresso with sea-salt cream top.', 160.00, 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085'),
-  ('Orange Cold Brew', 'Citrus bright cold brew over crystal ice.', 165.00, 'https://images.unsplash.com/photo-1461023058943-07fcbe16d735')
+  ('Double Espresso', 'Two bold shots with dark cocoa notes.', 90.00, 'https://images.unsplash.com/photo-1510707577719-ae7c14805e2e', 'espresso'),
+  ('Americano Black', 'Extended espresso with hot water and extra aroma.', 100.00, 'https://images.unsplash.com/photo-1494314671902-399b18174975', 'espresso'),
+  ('Piccolo Latte', 'Compact milk coffee with rich body.', 120.00, 'https://images.unsplash.com/photo-1529447197861-3f296e5d7f84', 'espresso'),
+  ('Spanish Latte', 'Silky espresso with condensed milk sweetness.', 145.00, 'https://images.unsplash.com/photo-1509042239860-f550ce710b93', 'signature'),
+  ('Sea Salt Mocha', 'Chocolate espresso with sea-salt cream top.', 160.00, 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085', 'signature'),
+  ('Orange Cold Brew', 'Citrus bright cold brew over crystal ice.', 165.00, 'https://images.unsplash.com/photo-1461023058943-07fcbe16d735', 'signature')
 on conflict (name) do update
 set
   description = excluded.description,
   base_price = excluded.base_price,
-  image_url = excluded.image_url;
+  image_url = excluded.image_url,
+  category = excluded.category;
+
+update public.menu_items
+set category = 'espresso'
+where category = 'signature'
+  and lower(name) in ('double espresso', 'americano black', 'piccolo latte', 'espresso');
+
+update public.menu_items
+set category = 'bites'
+where category = 'signature'
+  and (
+    lower(name) like '%croissant%'
+    or lower(name) like '%melt%'
+    or lower(name) like '%tart%'
+    or lower(name) like '%cookie%'
+    or lower(name) like '%sandwich%'
+    or lower(name) like '%ham%'
+    or lower(name) like '%choco%'
+  );
 
 create table if not exists public.daily_feature (
   id integer primary key check (id = 1),

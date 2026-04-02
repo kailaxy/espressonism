@@ -39,15 +39,6 @@ const DEFAULT_HIGHLIGHT_ITEM_NAMES = new Set([
   "butter croissant"
 ]);
 
-const ESPRESSO_ITEM_NAMES = new Set([
-  "double espresso",
-  "americano black",
-  "piccolo latte",
-  "espresso"
-]);
-
-const BITES_KEYWORDS = ["croissant", "melt", "tart", "cookie", "sandwich", "ham", "choco"];
-
 const MENU_NOTES: Record<string, string> = {
   "spanish latte": "Best seller",
   "orange cold brew": "Seasonal",
@@ -60,6 +51,7 @@ interface MenuItemRow {
   description: string | null;
   base_price: number | string;
   image_url: string | null;
+  category: string | null;
 }
 
 interface TodayHighlightRow {
@@ -117,15 +109,9 @@ function isPaymentMethod(value: unknown): value is PaymentMethod {
   return value === "cash" || value === "gcash";
 }
 
-function inferMenuCategory(name: string): MenuItem["category"] {
-  const normalizedName = name.trim().toLowerCase();
-
-  if (ESPRESSO_ITEM_NAMES.has(normalizedName)) {
-    return "espresso";
-  }
-
-  if (BITES_KEYWORDS.some((keyword) => normalizedName.includes(keyword))) {
-    return "bites";
+function normalizeMenuCategory(value: unknown): MenuItem["category"] {
+  if (value === "espresso" || value === "signature" || value === "bites") {
+    return value;
   }
 
   return "signature";
@@ -140,7 +126,7 @@ function mapMenuRowToItem(row: MenuItemRow): MenuItem {
     name: row.name,
     description: row.description?.trim() || "Crafted fresh for your next coffee break.",
     price: Number.isFinite(parsedPrice) ? parsedPrice : 0,
-    category: inferMenuCategory(row.name),
+    category: normalizeMenuCategory(row.category),
     imageUrl: row.image_url,
     note: MENU_NOTES[normalizedName]
   };

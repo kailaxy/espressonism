@@ -7,6 +7,7 @@ import { supabase } from "../../supabaseClient";
 
 type OrderStatus = "received" | "preparing" | "brewing" | "ready" | "completed" | "cancelled";
 type AdminTab = "orders" | "menu" | "highlights" | "today-bar" | "sales";
+type MenuCategory = "espresso" | "signature" | "bites";
 
 type DashboardOrder = {
   id: string;
@@ -55,12 +56,14 @@ type MenuManagerItem = {
   description: string | null;
   base_price: number | string | null;
   image_url: string | null;
+  category: MenuCategory | string | null;
 };
 
 type NewMenuItemForm = {
   name: string;
   description: string;
   basePrice: string;
+  category: MenuCategory;
 };
 
 type TodayHighlightRow = {
@@ -95,7 +98,7 @@ type AdminNotice = {
 
 const ORDER_SELECT_FIELDS =
   "id, customer_name, customer_phone, order_type, delivery_address, payment_method, gcash_reference, items, total_price, status, created_at";
-const MENU_ITEM_SELECT_FIELDS = "id, name, description, base_price, image_url";
+const MENU_ITEM_SELECT_FIELDS = "*";
 const TODAY_HIGHLIGHT_SELECT_FIELDS = "id, menu_item_id, created_at";
 const TODAY_AT_BAR_SELECT_FIELDS = "id, title, description, dose, extraction_time, brew_temp, guest_score";
 const ADMIN_AUTH_STORAGE_KEY = "espressonism-admin-auth-session-v1";
@@ -122,8 +125,15 @@ const ADMIN_TABS: Array<{ key: AdminTab; label: string }> = [
 const EMPTY_MENU_FORM: NewMenuItemForm = {
   name: "",
   description: "",
-  basePrice: ""
+  basePrice: "",
+  category: "signature"
 };
+
+const MENU_CATEGORY_OPTIONS: Array<{ value: MenuCategory; label: string }> = [
+  { value: "espresso", label: "Espresso" },
+  { value: "signature", label: "Signature" },
+  { value: "bites", label: "Bites" }
+];
 
 const EMPTY_TODAY_AT_BAR_FORM: TodayAtBarForm = {
   title: "",
@@ -149,6 +159,28 @@ function parseMoney(value: number | string | null | undefined): number {
   const numericValue = typeof value === "string" ? Number(value) : value;
   if (typeof numericValue !== "number" || !Number.isFinite(numericValue)) return 0;
   return numericValue;
+}
+
+function isMenuCategory(value: unknown): value is MenuCategory {
+  return value === "espresso" || value === "signature" || value === "bites";
+}
+
+function normalizeMenuCategory(value: unknown): MenuCategory {
+  return isMenuCategory(value) ? value : "signature";
+}
+
+function normalizeMenuManagerItem(item: MenuManagerItem): MenuManagerItem {
+  return {
+    ...item,
+    category: normalizeMenuCategory(item.category)
+  };
+}
+
+function formatMenuCategoryLabel(value: unknown): string {
+  const category = normalizeMenuCategory(value);
+  if (category === "espresso") return "Espresso";
+  if (category === "bites") return "Bites";
+  return "Signature";
 }
 
 function normalizeOrderItems(value: unknown): NormalizedOrderItem[] {
@@ -827,7 +859,8 @@ export default function AdminDashboardPage() {
         return;
       }
 
-      setMenuItems(sortMenuItemsByName((data ?? []) as MenuManagerItem[]));
+      const normalizedMenuItems = ((data ?? []) as MenuManagerItem[]).map(normalizeMenuManagerItem);
+      setMenuItems(sortMenuItemsByName(normalizedMenuItems));
       setIsMenuLoading(false);
     };
 
@@ -967,6 +1000,7 @@ export default function AdminDashboardPage() {
     const nextName = menuForm.name.trim();
     const nextDescription = menuForm.description.trim();
     const nextPrice = Number(menuForm.basePrice);
+    const nextCategory = normalizeMenuCategory(menuForm.category);
 
     if (!nextName) {
       setMenuError("Drink name is required.");
@@ -988,19 +1022,22 @@ export default function AdminDashboardPage() {
           name: nextName,
           description: nextDescription,
           base_price: nextPrice,
-          image_url: null
+          image_url: null,
+          category: nextCategory
         }
       ])
       .select(MENU_ITEM_SELECT_FIELDS)
       .single();
 
     if (error || !data) {
-      setMenuError(error?.message || "Unable to add menu item.");
+      const hasCategoryError = error?.message?.toLowerCase().includes("category");
+      setMenuError(hasCategoryError ? "Menu category field is missing. Please apply the latest schema.sql first." : error?.message || "Unable to add menu item.");
       setIsSavingMenuItem(false);
       return;
     }
 
-    setMenuItems((previousItems) => sortMenuItemsByName([...previousItems, data as MenuManagerItem]));
+    const createdMenuItem = normalizeMenuManagerItem(data as MenuManagerItem);
+    setMenuItems((previousItems) => sortMenuItemsByName([...previousItems, createdMenuItem]));
     setMenuForm(EMPTY_MENU_FORM);
     setIsAddMenuFormOpen(false);
     setIsSavingMenuItem(false);
@@ -1089,7 +1126,7 @@ export default function AdminDashboardPage() {
       return null;
     }
 
-    const updatedMenuItem = data as MenuManagerItem;
+    const updatedMenuItem = normalizeMenuManagerItem(data as MenuManagerItem);
 
     setMenuItems((previousItems) =>
       sortMenuItemsByName(previousItems.map((item) => (item.id === menuItem.id ? updatedMenuItem : item)))
@@ -1503,84 +1540,16 @@ export default function AdminDashboardPage() {
               type="button"
               className="barista-manager-toggle"
               onClick={() => {
-                setIsAddMenuFormOpen((open) => !open);
+                setIsAddMenuFormOpen(true);
+                setMenuForm(EMPTY_MENU_FORM);
                 setMenuError(null);
               }}
             >
-              {isAddMenuFormOpen ? "Close Form" : "Add New Drink"}
+              Add New Drink
             </button>
           </header>
 
           {menuError ? <p className="barista-state barista-state-error">{menuError}</p> : null}
-
-          {isAddMenuFormOpen ? (
-            <form className="barista-manager-form" onSubmit={handleCreateMenuItem}>
-              <div className="barista-manager-form-grid">
-                <label className="barista-form-field" htmlFor="menuItemName">
-                  Name
-                  <input
-                    id="menuItemName"
-                    type="text"
-                    value={menuForm.name}
-                    onChange={(event) => setMenuForm((previousForm) => ({ ...previousForm, name: event.target.value }))}
-                    placeholder="Spanish Latte"
-                    required
-                  />
-                </label>
-
-                <label className="barista-form-field" htmlFor="menuItemPrice">
-                  Base Price (PHP)
-                  <input
-                    id="menuItemPrice"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={menuForm.basePrice}
-                    onChange={(event) => setMenuForm((previousForm) => ({ ...previousForm, basePrice: event.target.value }))}
-                    placeholder="145"
-                    required
-                  />
-                </label>
-
-                <label className="barista-form-field barista-form-field-full" htmlFor="menuItemDescription">
-                  Description
-                  <textarea
-                    id="menuItemDescription"
-                    rows={2}
-                    value={menuForm.description}
-                    onChange={(event) => setMenuForm((previousForm) => ({ ...previousForm, description: event.target.value }))}
-                    placeholder="Silky espresso with condensed milk sweetness."
-                  />
-                </label>
-
-                <p className="barista-image-helper barista-form-field-full">
-                  After adding a drink, open its Image button in the table to upload, crop, and save a square image.
-                </p>
-              </div>
-
-              <div className="barista-manager-actions">
-                <button
-                  type="button"
-                  className="barista-logout-btn"
-                  onClick={() => {
-                    setIsAddMenuFormOpen(false);
-                    setMenuForm(EMPTY_MENU_FORM);
-                    setMenuError(null);
-                  }}
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  className="barista-action-btn barista-manager-submit"
-                  disabled={isSavingMenuItem}
-                >
-                  {isSavingMenuItem ? "Saving..." : "Add Drink"}
-                </button>
-              </div>
-            </form>
-          ) : null}
 
           {isMenuLoading ? (
             <p className="barista-state">Loading menu items...</p>
@@ -1592,6 +1561,7 @@ export default function AdminDashboardPage() {
                 <thead>
                   <tr>
                     <th>Name</th>
+                    <th>Category</th>
                     <th>Description</th>
                     <th>Price</th>
                     <th>Image</th>
@@ -1606,6 +1576,7 @@ export default function AdminDashboardPage() {
                     return (
                       <tr key={menuItem.id}>
                         <td>{menuItem.name}</td>
+                        <td>{formatMenuCategoryLabel(menuItem.category)}</td>
                         <td>{menuItem.description?.trim() || "No description"}</td>
                         <td>{formatCurrency(parseMoney(menuItem.base_price))}</td>
                         <td>
@@ -1650,62 +1621,18 @@ export default function AdminDashboardPage() {
             <button
               type="button"
               className="barista-manager-toggle"
+              disabled={availableHighlightMenuItems.length === 0}
               onClick={() => {
-                setIsAddHighlightsFormOpen((isOpen) => !isOpen);
+                setIsAddHighlightsFormOpen(true);
+                setHighlightCandidateId(availableHighlightMenuItems[0]?.id ?? "");
                 setHighlightsError(null);
               }}
             >
-              {isAddHighlightsFormOpen ? "Close Form" : "Add Highlight"}
+              Add Highlight
             </button>
           </header>
 
           {highlightsError ? <p className="barista-state barista-state-error">{highlightsError}</p> : null}
-
-          {isAddHighlightsFormOpen ? (
-            <form className="barista-manager-form" onSubmit={handleAddTodayHighlight}>
-              <div className="barista-manager-form-grid">
-                <label className="barista-form-field barista-form-field-full" htmlFor="highlightMenuItem">
-                  Highlight Drink
-                  <select
-                    id="highlightMenuItem"
-                    value={highlightCandidateId}
-                    onChange={(event) => setHighlightCandidateId(event.target.value)}
-                    disabled={availableHighlightMenuItems.length === 0 || isSavingHighlight}
-                    required
-                  >
-                    <option value="">Select a drink from your menu</option>
-                    {availableHighlightMenuItems.map((menuItem) => (
-                      <option key={menuItem.id} value={menuItem.id}>
-                        {menuItem.name} ({formatCurrency(parseMoney(menuItem.base_price))})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <div className="barista-manager-actions">
-                <button
-                  type="button"
-                  className="barista-logout-btn"
-                  onClick={() => {
-                    setIsAddHighlightsFormOpen(false);
-                    setHighlightCandidateId("");
-                    setHighlightsError(null);
-                  }}
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  className="barista-action-btn barista-manager-submit"
-                  disabled={availableHighlightMenuItems.length === 0 || isSavingHighlight}
-                >
-                  {isSavingHighlight ? "Saving..." : "Add Drink"}
-                </button>
-              </div>
-            </form>
-          ) : null}
 
           {isHighlightsLoading ? (
             <p className="barista-state">Loading today highlights...</p>
@@ -1910,6 +1837,221 @@ export default function AdminDashboardPage() {
       ) : null}
 
       </section>
+
+      {isAddMenuFormOpen ? (
+        <div
+          className="barista-image-modal-backdrop"
+          role="presentation"
+          onClick={() => {
+            setIsAddMenuFormOpen(false);
+            setMenuForm(EMPTY_MENU_FORM);
+            setMenuError(null);
+          }}
+        >
+          <section
+            className="barista-image-modal barista-manager-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Add new drink"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="barista-image-modal-head">
+              <div>
+                <p className="barista-dashboard-kicker">Owner CMS</p>
+                <h3>Add New Drink</h3>
+              </div>
+
+              <button
+                type="button"
+                className="barista-image-modal-close"
+                onClick={() => {
+                  setIsAddMenuFormOpen(false);
+                  setMenuForm(EMPTY_MENU_FORM);
+                  setMenuError(null);
+                }}
+                aria-label="Close add drink form"
+              >
+                X
+              </button>
+            </header>
+
+            <form className="barista-manager-form" onSubmit={handleCreateMenuItem}>
+              <div className="barista-manager-form-grid">
+                <label className="barista-form-field" htmlFor="menuItemName">
+                  Name
+                  <input
+                    id="menuItemName"
+                    type="text"
+                    value={menuForm.name}
+                    onChange={(event) => setMenuForm((previousForm) => ({ ...previousForm, name: event.target.value }))}
+                    placeholder="Spanish Latte"
+                    required
+                  />
+                </label>
+
+                <label className="barista-form-field" htmlFor="menuItemCategory">
+                  Category
+                  <select
+                    id="menuItemCategory"
+                    value={menuForm.category}
+                    onChange={(event) =>
+                      setMenuForm((previousForm) => ({
+                        ...previousForm,
+                        category: normalizeMenuCategory(event.target.value)
+                      }))
+                    }
+                  >
+                    {MENU_CATEGORY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="barista-form-field" htmlFor="menuItemPrice">
+                  Base Price (PHP)
+                  <input
+                    id="menuItemPrice"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={menuForm.basePrice}
+                    onChange={(event) => setMenuForm((previousForm) => ({ ...previousForm, basePrice: event.target.value }))}
+                    placeholder="145"
+                    required
+                  />
+                </label>
+
+                <label className="barista-form-field barista-form-field-full" htmlFor="menuItemDescription">
+                  Description
+                  <textarea
+                    id="menuItemDescription"
+                    rows={2}
+                    value={menuForm.description}
+                    onChange={(event) => setMenuForm((previousForm) => ({ ...previousForm, description: event.target.value }))}
+                    placeholder="Silky espresso with condensed milk sweetness."
+                  />
+                </label>
+
+                <p className="barista-image-helper barista-form-field-full">
+                  After adding a drink, open its Image button in the table to upload, crop, and save a square image.
+                </p>
+              </div>
+
+              {menuError ? <p className="barista-state barista-state-error">{menuError}</p> : null}
+
+              <div className="barista-manager-actions">
+                <button
+                  type="button"
+                  className="barista-logout-btn"
+                  onClick={() => {
+                    setIsAddMenuFormOpen(false);
+                    setMenuForm(EMPTY_MENU_FORM);
+                    setMenuError(null);
+                  }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="barista-action-btn barista-manager-submit"
+                  disabled={isSavingMenuItem}
+                >
+                  {isSavingMenuItem ? "Saving..." : "Add Drink"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {isAddHighlightsFormOpen ? (
+        <div
+          className="barista-image-modal-backdrop"
+          role="presentation"
+          onClick={() => {
+            setIsAddHighlightsFormOpen(false);
+            setHighlightCandidateId("");
+            setHighlightsError(null);
+          }}
+        >
+          <section
+            className="barista-image-modal barista-manager-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Add highlight"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="barista-image-modal-head">
+              <div>
+                <p className="barista-dashboard-kicker">Owner CMS</p>
+                <h3>Add Highlight</h3>
+              </div>
+
+              <button
+                type="button"
+                className="barista-image-modal-close"
+                onClick={() => {
+                  setIsAddHighlightsFormOpen(false);
+                  setHighlightCandidateId("");
+                  setHighlightsError(null);
+                }}
+                aria-label="Close add highlight form"
+              >
+                X
+              </button>
+            </header>
+
+            <form className="barista-manager-form" onSubmit={handleAddTodayHighlight}>
+              <div className="barista-manager-form-grid">
+                <label className="barista-form-field barista-form-field-full" htmlFor="highlightMenuItem">
+                  Highlight Drink
+                  <select
+                    id="highlightMenuItem"
+                    value={highlightCandidateId}
+                    onChange={(event) => setHighlightCandidateId(event.target.value)}
+                    disabled={availableHighlightMenuItems.length === 0 || isSavingHighlight}
+                    required
+                  >
+                    <option value="">Select a drink from your menu</option>
+                    {availableHighlightMenuItems.map((menuItem) => (
+                      <option key={menuItem.id} value={menuItem.id}>
+                        {menuItem.name} ({formatCurrency(parseMoney(menuItem.base_price))})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {highlightsError ? <p className="barista-state barista-state-error">{highlightsError}</p> : null}
+
+              <div className="barista-manager-actions">
+                <button
+                  type="button"
+                  className="barista-logout-btn"
+                  onClick={() => {
+                    setIsAddHighlightsFormOpen(false);
+                    setHighlightCandidateId("");
+                    setHighlightsError(null);
+                  }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="barista-action-btn barista-manager-submit"
+                  disabled={availableHighlightMenuItems.length === 0 || isSavingHighlight}
+                >
+                  {isSavingHighlight ? "Saving..." : "Add Drink"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       {activeMenuImageItem ? (
         <div className="barista-image-modal-backdrop" role="presentation" onClick={closeMenuImageDialog}>
