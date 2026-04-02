@@ -311,10 +311,11 @@ using (status in ('received', 'preparing', 'brewing', 'ready'))
 with check (status in ('brewing', 'ready', 'completed', 'cancelled'));
 
 drop policy if exists "Authenticated users can read archived orders" on public.orders_archive;
-create policy "Authenticated users can read archived orders"
+drop policy if exists "Dashboard can read archived orders" on public.orders_archive;
+create policy "Dashboard can read archived orders"
 on public.orders_archive
 for select
-to authenticated
+to anon, authenticated
 using (true);
 
 grant usage on schema public to anon, authenticated;
@@ -322,4 +323,4 @@ grant select on table public.menu_items to anon, authenticated;
 grant insert on table public.orders to anon, authenticated;
 grant select on table public.orders to anon, authenticated;
 grant update(status) on table public.orders to anon, authenticated;
-grant select on table public.orders_archive to authenticated;
+grant select on table public.orders_archive to anon, authenticated;

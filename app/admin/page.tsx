@@ -131,6 +131,19 @@ function upsertCompletedOrder(orderList: DashboardOrder[], incomingOrder: Dashbo
   return sortByCreatedAt([...remainingOrders, incomingOrder]);
 }
 
+function mergeCompletedOrders(...orderLists: DashboardOrder[][]): DashboardOrder[] {
+  const dedupedOrders = new Map<string, DashboardOrder>();
+
+  for (const orderList of orderLists) {
+    for (const order of orderList) {
+      if (!isCompletedStatus(order.status)) continue;
+      dedupedOrders.set(order.id, order);
+    }
+  }
+
+  return sortByCreatedAt([...dedupedOrders.values()]);
+}
+
 function applyLocalStatusUpdate(
   orderList: DashboardOrder[],
   orderId: string,
@@ -252,7 +265,7 @@ export default function AdminDashboardPage() {
       setIsLoading(true);
       setFetchError(null);
 
-      const [activeResult, completedResult] = await Promise.all([
+      const [activeResult, liveCompletedResult, archivedCompletedResult] = await Promise.all([
         supabase
           .from("orders")
           .select(ORDER_SELECT_FIELDS)
@@ -262,13 +275,23 @@ export default function AdminDashboardPage() {
           .from("orders")
           .select(ORDER_SELECT_FIELDS)
           .eq("status", "completed")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("orders_archive")
+          .select(ORDER_SELECT_FIELDS)
+          .eq("status", "completed")
           .order("created_at", { ascending: false })
       ]);
 
       if (!isMounted) return;
 
-      if (activeResult.error || completedResult.error) {
-        setFetchError(activeResult.error?.message || completedResult.error?.message || "Unable to load dashboard data.");
+      if (activeResult.error || liveCompletedResult.error || archivedCompletedResult.error) {
+        setFetchError(
+          activeResult.error?.message ||
+            liveCompletedResult.error?.message ||
+            archivedCompletedResult.error?.message ||
+            "Unable to load dashboard data."
+        );
         setOrders([]);
         setCompletedOrders([]);
         setIsLoading(false);
@@ -276,9 +299,11 @@ export default function AdminDashboardPage() {
       }
 
       const loadedOrders = ((activeResult.data ?? []) as DashboardOrder[]).filter((order) => isBoardStatus(order.status));
-      const loadedCompletedOrders = ((completedResult.data ?? []) as DashboardOrder[]).filter((order) => isCompletedStatus(order.status));
+      const liveCompletedOrders = ((liveCompletedResult.data ?? []) as DashboardOrder[]).filter((order) => isCompletedStatus(order.status));
+      const archivedCompletedOrders = ((archivedCompletedResult.data ?? []) as DashboardOrder[]).filter((order) => isCompletedStatus(order.status));
+      const loadedCompletedOrders = mergeCompletedOrders(liveCompletedOrders, archivedCompletedOrders);
       setOrders(sortByCreatedAt(loadedOrders));
-      setCompletedOrders(sortByCreatedAt(loadedCompletedOrders));
+      setCompletedOrders(loadedCompletedOrders);
       setIsLoading(false);
     };
 
@@ -292,7 +317,7 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const channel = supabase
+    const ordersChannel = supabase
       .channel("barista-dashboard-orders")
       .on(
         "postgres_changes",
@@ -333,8 +358,47 @@ export default function AdminDashboardPage() {
       )
       .subscribe();
 
+    const archiveChannel = supabase
+      .channel("barista-dashboard-orders-archive")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "orders_archive"
+        },
+        (payload: { new: DashboardOrder }) => {
+          setCompletedOrders((previousOrders) => upsertCompletedOrder(previousOrders, payload.new));
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "orders_archive"
+        },
+        (payload: { new: DashboardOrder }) => {
+          setCompletedOrders((previousOrders) => upsertCompletedOrder(previousOrders, payload.new));
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "orders_archive"
+        },
+        (payload: { old?: { id?: string } }) => {
+          if (!payload.old?.id) return;
+          setCompletedOrders((previousOrders) => previousOrders.filter((order) => order.id !== payload.old?.id));
+        }
+      )
+      .subscribe();
+
     return () => {
-      void supabase.removeChannel(channel);
+      void supabase.removeChannel(ordersChannel);
+      void supabase.removeChannel(archiveChannel);
     };
   }, [isAuthenticated]);
 
