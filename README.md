@@ -1,92 +1,117 @@
 # Espressonism
 
-Espressonism is a coffee ordering web app built with Next.js and Supabase.
+Espressonism is a Next.js + Supabase coffee ordering platform with a polished customer ordering flow and a real-time barista operations dashboard.
 
-It includes:
-- A branded landing page for customers
-- A customer ordering flow with real-time status updates
-- A barista kanban dashboard with status actions and sales summary
-- Receipt export to image
-- Local order history recovery for customers who close the page
+The app includes:
+- Branded landing page and storytelling sections
+- Live menu pulled from Supabase
+- Cart, modifiers, checkout, and payment selection
+- Real-time order tracking for customers
+- PIN-gated barista board with lane-based status actions
+- Sales summary (today, week, month)
+- Receipt rendering and export
+- Browser-based order draft and order history recovery
 
-## Features
+## Live Routes
 
-### Customer Experience
-- Browse menu categories and add drinks to cart
-- Multi-step checkout with payment and order-type validation
-- Real-time order tracking (`received -> brewing -> ready -> completed`)
-- Receipt view with "Save Receipt as Image"
-- Local Order History (continue tracking or reopen receipt)
+- `/` - marketing/landing page
+- `/order` - customer ordering and tracking
+- `/admin` - barista dashboard
 
-### Barista Dashboard
-- PIN-gated dashboard login (`NEXT_PUBLIC_ADMIN_PIN` or fallback)
-- Kanban lanes: New Orders, Preparing, Ready
-- Action buttons to advance order status
-- Realtime sync for inserts/updates/deletes
-- Bottom sales summary drawer with:
-  - Today sales
-  - This week sales
-  - This month sales
-- Optional Remember Me in browser session (sessionStorage)
+## Core Features
 
-### Data + Backend
-- Supabase Postgres `orders` and `menu_items`
-- RLS policies for menu/order reads and controlled updates
-- Pickup order archiving to `orders_archive` for completed/cancelled
-- Generated GMT+8 timestamp helpers (`created_at_gmt8`)
+### Customer Experience (`/order`)
+
+- Menu categories with quick-add and customizable drink options
+- Line-item modifiers:
+  - Size: `regular`, `large`
+  - Milk: `whole`, `oat`, `almond`
+- Cart and checkout validation:
+  - Name and contact required
+  - Delivery address required when `order_type = delivery`
+  - GCash reference must be exactly 13 digits when `payment_method = gcash`
+- Multi-step flow:
+  - Cart
+  - Payment details
+  - Tracking / receipt
+- Real-time order status updates via Supabase Realtime subscriptions
+- Receipt view + image export (using `html-to-image`)
+- Local persistence:
+  - Draft cart/checkout state
+  - Recent order history for quick reopen/continue
+
+### Barista Dashboard (`/admin`)
+
+- PIN login using `NEXT_PUBLIC_ADMIN_PIN` (fallback: `barista123`)
+- Session-only remember-me behavior via `sessionStorage`
+- Kanban lanes:
+  - New Orders (`received`)
+  - Preparing (`preparing` and `brewing` grouped visually)
+  - Ready (`ready`)
+- Action progression:
+  - `received -> brewing`
+  - `brewing/preparing -> ready`
+  - `ready -> completed`
+- Real-time sync of inserts/updates/deletes from the `orders` table
+- Completed orders list and revenue summary (today/week/month)
+
+### Data Layer (Supabase)
+
+- `menu_items` table for product catalog
+- `orders` table for active orders
+- `orders_archive` table for archived pickup orders
+- Trigger-based pickup order archiving when status becomes `completed` or `cancelled`
+- Generated local timezone helper column (`created_at_gmt8`)
+- RLS policies and grants for read/insert/update access behavior
 
 ## Tech Stack
 
 - Next.js 14 (App Router)
 - React 18 + TypeScript
-- Supabase JS client
-- CSS (custom, coffee-themed)
-- html-to-image (receipt export)
+- Supabase JavaScript client v2
+- Custom CSS styling
+- `html-to-image` for receipt image export
 
-## Project Structure
+## Repository Structure
 
-- `app/page.tsx`: Landing page
-- `app/order/page.tsx`: Customer ordering flow
-- `app/admin/page.tsx`: Barista dashboard
-- `app/components/*`: Shared UI components
-- `app/globals.css`: Global styling
-- `schema.sql`: Supabase schema, policies, triggers, archive logic
-- `supabaseClient.js`: Supabase client setup
-
-## Prerequisites
-
-- Node.js 18+ (Node 20 recommended)
-- npm
-- Supabase project
-- GitHub account
-- Vercel account (for deployment)
+```text
+app/
+  page.tsx               # Landing page
+  admin/page.tsx         # Barista dashboard
+  order/page.tsx         # Customer order flow
+  components/            # Shared UI and order components
+  globals.css            # Global styles
+schema.sql               # Supabase schema + policies + trigger logic
+supabaseClient.js        # Supabase client initialization
+next.config.mjs          # Next config (incl. remote image host rules)
+```
 
 ## Environment Variables
 
-Create `.env.local` from `.env.example`.
+Use `.env.example` as the template.
 
 Required:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 
 Optional:
-- `NEXT_PUBLIC_ADMIN_PIN` (default fallback in code is `barista123`)
+- `NEXT_PUBLIC_ADMIN_PIN`
 
-## Local Setup
+Fallback aliases supported by `supabaseClient.js`:
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_ANON_KEY`
 
-1. Install dependencies:
+## Local Development Setup
+
+1. Install dependencies.
 
 ```bash
 npm install
 ```
 
-2. Create env file:
-
-```bash
-cp .env.example .env.local
-```
-
-(Windows PowerShell)
+2. Create local env file.
 
 ```powershell
 Copy-Item .env.example .env.local
@@ -94,100 +119,137 @@ Copy-Item .env.example .env.local
 
 3. Fill `.env.local` with your Supabase values.
 
-4. Open Supabase SQL Editor and run `schema.sql`.
+4. Create a Supabase project and run `schema.sql` in the SQL Editor.
 
-5. Start dev server:
+5. Start local dev server.
 
 ```bash
 npm run dev
 ```
 
-6. Open:
+6. Open the app:
 - `http://localhost:3000/`
 - `http://localhost:3000/order`
 - `http://localhost:3000/admin`
 
 ## NPM Scripts
 
-- `npm run dev`: Start development server
-- `npm run lint`: Run lint checks
-- `npm run build`: Production build
-- `npm run start`: Run production server
+- `npm run dev` - start development server
+- `npm run lint` - run lint checks
+- `npm run build` - production build
+- `npm run start` - run production server
 
-## Database Notes
+## Database Overview
 
-- Active workflow statuses: `received`, `brewing`, `ready`, `completed`, `cancelled`
-- Pickup orders with status `completed` or `cancelled` are moved to `orders_archive`
-- Realtime status updates are consumed by customer tracker and barista board
-- `created_at` is stored as `timestamptz` (UTC internally); `created_at_gmt8` is generated for Asia/Manila display convenience
+### `menu_items`
 
-## Deploying to Vercel (Step-by-Step)
+- UUID primary key
+- `name`, `description`, `base_price`, `image_url`
+- Seed data included in `schema.sql`
 
-### 1) Push code to GitHub
-Push your latest code to this repository.
+### `orders`
 
-### 2) Import project in Vercel
-1. Go to Vercel dashboard
-2. Click **Add New -> Project**
-3. Import `kailaxy/espressonism`
+- UUID primary key
+- Customer details, item JSON, total, status, order type, payment details, timestamps
+- Key constraints:
+  - Status allowed: `received`, `brewing`, `ready`, `completed`, `cancelled`
+  - Order type allowed: `pickup`, `delivery`
+  - Payment method allowed: `cash`, `gcash`
+  - Delivery address required for delivery
+  - GCash reference required and must match 13-digit pattern for GCash payments
 
-### 3) Configure project settings
-- Framework preset: **Next.js**
-- Build command: `npm run build` (default)
-- Output: default Next.js output
+### `orders_archive`
 
-### 4) Add Environment Variables in Vercel
-In Project Settings -> Environment Variables, add:
+- Mirror of order fields with `archived_at`
+- Trigger copies qualifying pickup orders from `orders` then removes from active table
+
+## Realtime Behavior
+
+- Customer tracker subscribes to updates for the current order ID
+- Admin board subscribes to table-level insert/update/delete events
+- This provides near-live synchronization between customer tracking and barista actions
+
+## Deployment Guide (Vercel)
+
+This section is the exact flow for deploying `kailaxy/espressonism`.
+
+### 1. Push source code to GitHub
+
+Make sure your latest local commit is pushed to the GitHub repository branch you want Vercel to deploy.
+
+### 2. Import the repository in Vercel
+
+1. Sign in to Vercel.
+2. Click `Add New` -> `Project`.
+3. Import `kailaxy/espressonism`.
+
+### 3. Configure build settings
+
+- Framework Preset: `Next.js`
+- Build Command: `npm run build`
+- Install Command: `npm install`
+- Output setting: default Next.js output
+
+### 4. Add environment variables in Vercel
+
+In Project Settings -> Environment Variables, set:
+
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- `NEXT_PUBLIC_ADMIN_PIN` (optional but recommended)
+- `NEXT_PUBLIC_ADMIN_PIN` (recommended)
 
-Use the same values as local `.env.local`.
+Add these for at least `Production`. If you use Preview deployments, add them for `Preview` as well.
 
-### 5) Deploy
-Click **Deploy**.
+### 5. Confirm Supabase schema is applied
 
-### 6) Apply/verify Supabase schema
-If not already applied, run `schema.sql` in Supabase SQL Editor for the target project.
+Run `schema.sql` in your target Supabase project before production testing.
 
-### 7) Validate production behavior
-Check:
-- Landing page loads
-- `/order` can place orders
-- `/admin` login works
-- Status updates move lanes and sync to `/order`
-- Sales drawer totals update as completed orders appear
+### 6. Deploy
 
-### 8) (Optional) Add custom domain
-In Vercel Project -> Settings -> Domains, add your domain and follow DNS instructions.
+Trigger deployment from Vercel (initial deploy or by pushing commits to the connected branch).
 
-## Post-Deploy Checklist
+### 7. Validate production
 
-- Env vars are set in Vercel (Production, Preview as needed)
-- Supabase URL/key point to correct environment
-- RLS policies and grants were applied from `schema.sql`
-- Realtime is enabled and updates are observed in dashboard/tracker
-- Admin PIN is changed from default
+1. Open `/` and verify landing page assets load.
+2. Place an order at `/order`.
+3. Log into `/admin` and move the order across statuses.
+4. Confirm customer tracking updates in real time.
+5. Confirm completed/cancelled pickup behavior and dashboard totals.
+
+### 8. Optional domain setup
+
+Project Settings -> Domains -> add custom domain and apply DNS records.
+
+## Post-Deployment Checklist
+
+- Correct env vars in Vercel (Production/Preview)
+- `schema.sql` applied to the correct Supabase project
+- Realtime enabled and receiving events
+- RLS and grants active as expected
+- Admin PIN changed from default
 
 ## Troubleshooting
 
-### Orders not updating from dashboard
-- Re-run `schema.sql` and verify update policy/grant on `orders.status`
-- Confirm Supabase env vars are correct
+### Dashboard cannot update order status
 
-### Receipt/order history missing after refresh
-- Check browser local/session storage settings
-- Ensure no strict privacy mode is wiping storage
+- Reapply `schema.sql` and verify update policy/grant for `orders.status`
+- Confirm the deployed app points to the intended Supabase project
 
-### Build passes locally but fails on Vercel
-- Re-check env vars in Vercel
-- Ensure `NEXT_PUBLIC_SUPABASE_*` variables are present in the deployment environment
+### Customer tracker does not move statuses
+
+- Verify order row exists in `orders`
+- Verify Supabase Realtime is enabled for the table/project
+
+### Vercel build fails
+
+- Check that required env vars are present in Vercel
+- Ensure lockfile/dependencies are in sync locally before pushing
 
 ## Security Notes
 
-- Current admin PIN gate is client-side convenience, not enterprise auth.
-- For production hardening, replace with server-side auth (Supabase Auth, NextAuth, or middleware-protected routes).
+- Admin PIN is client-side convenience and not full authentication.
+- For stronger production security, migrate admin access to server-backed auth (for example, Supabase Auth + role checks).
 
 ## License
 
-This project is currently private and intended for internal/team use.
+Private/internal project unless a separate license file is added.
