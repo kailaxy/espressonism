@@ -2,7 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
 type CallbackAction = "prep" | "ready";
-type OrderStatus = "preparing" | "ready";
+type DatabaseOrderStatus = "brewing" | "ready";
+type FriendlyOrderStatus = "preparing" | "ready";
 
 type TelegramApiResult = {
   ok?: boolean;
@@ -37,7 +38,15 @@ function parseCallbackData(data: unknown): { action: CallbackAction; orderId: st
   return { action, orderId };
 }
 
-function mapActionToStatus(action: CallbackAction): OrderStatus {
+function mapActionToDatabaseStatus(action: CallbackAction): DatabaseOrderStatus {
+  if (action === "prep") {
+    return "brewing";
+  }
+
+  return "ready";
+}
+
+function mapActionToFriendlyStatus(action: CallbackAction): FriendlyOrderStatus {
   if (action === "prep") {
     return "preparing";
   }
@@ -45,7 +54,7 @@ function mapActionToStatus(action: CallbackAction): OrderStatus {
   return "ready";
 }
 
-function buildEditedMessage(orderId: string, status: OrderStatus): string {
+function buildEditedMessage(orderId: string, status: FriendlyOrderStatus): string {
   if (status === "preparing") {
     return `Order ${orderId} is now being prepared.`;
   }
@@ -66,12 +75,28 @@ async function callTelegramMethod<TPayload extends Record<string, unknown>>(
     });
 
     if (!response.ok) {
+      console.error("[telegram-webhook] Telegram API non-OK", {
+        method,
+        status: response.status
+      });
       return null;
     }
 
     const result = (await response.json()) as TelegramApiResult;
+
+    if (!result.ok) {
+      console.error("[telegram-webhook] Telegram API ok:false", {
+        method,
+        description: result.description ?? null
+      });
+    }
+
     return result;
   } catch {
+    console.error("[telegram-webhook] Telegram API non-OK", {
+      method,
+      reason: "fetch_failed"
+    });
     return null;
   }
 }
@@ -99,11 +124,19 @@ async function editMessageText(
 }
 
 export async function POST(request: Request) {
+  console.info("[telegram-webhook] receive", { method: request.method });
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   const botToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
 
   if (!supabaseUrl || !serviceRoleKey || !botToken) {
+    console.error("[telegram-webhook] env missing", {
+      hasSupabaseUrl: Boolean(supabaseUrl),
+      hasServiceRoleKey: Boolean(serviceRoleKey),
+      hasBotToken: Boolean(botToken)
+    });
+
     return NextResponse.json(
       {
         success: false,
@@ -118,10 +151,15 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
+    console.warn("[telegram-webhook] malformed JSON");
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
   if (!isRecord(body) || !isRecord(body.callback_query)) {
+    console.warn("[telegram-webhook] webhook callback parse invalid", {
+      hasBodyRecord: isRecord(body),
+      hasCallbackQuery: isRecord(body) ? isRecord(body.callback_query) : false
+    });
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
@@ -135,34 +173,57 @@ export async function POST(request: Request) {
   const chatId = chat && typeof chat.id === "number" ? chat.id : null;
 
   if (!callbackQueryId) {
+    console.warn("[telegram-webhook] webhook callback parse invalid", {
+      reason: "missing_callback_query_id"
+    });
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
   const parsed = parseCallbackData(callbackData);
 
   if (!parsed) {
+    console.warn("[telegram-webhook] webhook callback parse invalid", {
+      reason: "invalid_callback_data"
+    });
     await answerCallbackQuery(botToken, callbackQueryId, "Sorry, that action is invalid.");
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
-  const status = mapActionToStatus(parsed.action);
+  const dbStatus = mapActionToDatabaseStatus(parsed.action);
+  const friendlyStatus = mapActionToFriendlyStatus(parsed.action);
   const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
-  const { error } = await supabaseAdmin
+  const { data: updatedOrders, error } = await supabaseAdmin
     .from("orders")
-    .update({ status })
-    .eq("id", parsed.orderId);
+    .update({ status: dbStatus })
+    .eq("id", parsed.orderId)
+    .select("id");
 
   if (error) {
+    console.error("[telegram-webhook] Supabase update error", {
+      code: error.code ?? null,
+      message: error.message
+    });
     await answerCallbackQuery(botToken, callbackQueryId, "Could not update order right now. Please try again.");
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
-  await answerCallbackQuery(botToken, callbackQueryId, `Order marked as ${status}.`);
+  if (!updatedOrders || updatedOrders.length === 0) {
+    console.warn("[telegram-webhook] Supabase update zero rows");
+    await answerCallbackQuery(botToken, callbackQueryId, "That order was not found.");
+    return NextResponse.json({ ok: true }, { status: 200 });
+  }
+
+  await answerCallbackQuery(botToken, callbackQueryId, `Order marked as ${friendlyStatus}.`);
 
   if (chatId !== null && messageId !== null) {
-    const text = buildEditedMessage(parsed.orderId, status);
+    const text = buildEditedMessage(parsed.orderId, friendlyStatus);
     await editMessageText(botToken, chatId, messageId, text);
+  } else {
+    console.warn("[telegram-webhook] editMessageText skipped due to missing ids", {
+      hasChatId: chatId !== null,
+      hasMessageId: messageId !== null
+    });
   }
 
   return NextResponse.json({ ok: true }, { status: 200 });

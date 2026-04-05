@@ -187,10 +187,17 @@ function canUseOrderIdForCallbackData(orderId: string): boolean {
 }
 
 export async function POST(request: Request) {
+  console.info("[telegram-api] receive", { method: request.method });
+
   const botToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
   const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
 
   if (!botToken || !chatId) {
+    console.error("[telegram-api] env missing", {
+      hasBotToken: Boolean(botToken),
+      hasChatId: Boolean(chatId)
+    });
+
     return NextResponse.json(
       {
         success: false,
@@ -205,6 +212,8 @@ export async function POST(request: Request) {
   try {
     payload = await request.json();
   } catch {
+    console.warn("[telegram-api] malformed JSON");
+
     return NextResponse.json(
       {
         success: false,
@@ -215,6 +224,8 @@ export async function POST(request: Request) {
   }
 
   if (!isRecord(payload)) {
+    console.warn("[telegram-api] payload invalid", { reason: "not_an_object" });
+
     return NextResponse.json(
       {
         success: false,
@@ -231,6 +242,14 @@ export async function POST(request: Request) {
   const itemLines = parseItems(payload.items);
 
   if (!customerName || !orderType || !orderId || !totalPrice || !itemLines) {
+    console.warn("[telegram-api] payload invalid", {
+      hasCustomerName: Boolean(customerName),
+      hasOrderType: Boolean(orderType),
+      hasOrderId: Boolean(orderId),
+      hasTotalPrice: Boolean(totalPrice),
+      hasItemLines: Boolean(itemLines)
+    });
+
     return NextResponse.json(
       {
         success: false,
@@ -241,6 +260,8 @@ export async function POST(request: Request) {
   }
 
   if (!canUseOrderIdForCallbackData(orderId)) {
+    console.warn("[telegram-api] payload invalid", { reason: "callback_data_too_long" });
+
     return NextResponse.json(
       {
         success: false,
@@ -282,6 +303,8 @@ export async function POST(request: Request) {
       })
     });
   } catch {
+    console.error("[telegram-api] Telegram API non-OK", { reason: "fetch_failed" });
+
     return NextResponse.json(
       {
         success: false,
@@ -300,6 +323,10 @@ export async function POST(request: Request) {
   }
 
   if (!telegramResponse.ok) {
+    console.error("[telegram-api] Telegram API non-OK", {
+      status: telegramResponse.status
+    });
+
     return NextResponse.json(
       {
         success: false,
@@ -310,6 +337,11 @@ export async function POST(request: Request) {
   }
 
   if (!telegramData?.ok) {
+    console.error("[telegram-api] Telegram API ok:false", {
+      errorCode: telegramData?.error_code,
+      description: telegramData?.description ?? null
+    });
+
     return NextResponse.json(
       {
         success: false,
