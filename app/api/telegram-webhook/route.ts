@@ -11,6 +11,7 @@ type OrderDetails = {
   order_type: string;
   total_price: number | string;
   items: unknown;
+  special_instructions?: string | null;
 };
 
 type TelegramApiResult = {
@@ -19,6 +20,7 @@ type TelegramApiResult = {
 };
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
+const ORDER_DETAILS_COLUMNS = "id, customer_name, order_type, total_price, items, special_instructions";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -93,7 +95,11 @@ function normalizeOrderTypeLabel(orderType: string): string {
   return orderType;
 }
 
-function formatTotalForDisplay(totalPrice: number | string): string {
+function formatTotalForDisplay(totalPrice: number | string | null | undefined): string {
+  if (totalPrice === null || totalPrice === undefined) {
+    return "-";
+  }
+
   if (typeof totalPrice === "number" && Number.isFinite(totalPrice)) {
     return `₱${totalPrice.toFixed(2)}`;
   }
@@ -104,6 +110,10 @@ function formatTotalForDisplay(totalPrice: number | string): string {
 
   if (Number.isFinite(numericValue)) {
     return `₱${numericValue.toFixed(2)}`;
+  }
+
+  if (trimmed.length === 0) {
+    return "-";
   }
 
   if (trimmed.startsWith("₱")) {
@@ -152,19 +162,37 @@ function getStatusHeader(status: FriendlyOrderStatus): string {
 }
 
 function buildEditedMessage(order: OrderDetails, status: FriendlyOrderStatus): string {
-  const displayType = normalizeOrderTypeLabel(order.order_type);
+  const displayName = order.customer_name.trim().length > 0 ? order.customer_name : "-";
+  const displayType =
+    order.order_type.trim().length > 0 ? normalizeOrderTypeLabel(order.order_type) : "-";
   const displayTotal = formatTotalForDisplay(order.total_price);
   const items = formatItemsForDisplay(order.items);
+  const specialInstructions =
+    typeof order.special_instructions === "string" ? order.special_instructions.trim() : "";
 
-  return [
+  const lines = [
     `<b>${getStatusHeader(status)}</b>`,
     "",
-    `<b>Name:</b> ${escapeHtml(order.customer_name)}`,
+    `<b>Name:</b> ${escapeHtml(displayName)}`,
     `<b>Type:</b> ${escapeHtml(displayType)}`,
     `<b>Total:</b> ${escapeHtml(displayTotal)}`,
     "<b>Items:</b>",
     escapeHtml(items),
     `<b>Order ID:</b> ${escapeHtml(order.id)}`
+  ];
+
+  if (specialInstructions.length > 0) {
+    lines.push(`<b>Special Instructions:</b> ${escapeHtml(specialInstructions)}`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildCompletedFallbackMessage(orderId: string): string {
+  return [
+    `<b>${getStatusHeader("completed")}</b>`,
+    "",
+    `<b>Order ID:</b> ${escapeHtml(orderId)}`
   ].join("\n");
 }
 
@@ -334,18 +362,66 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
-  const { data: orderDetails, error: orderDetailsError } = await supabaseAdmin
+  const { data: orderRows, error: orderDetailsError } = await supabaseAdmin
     .from("orders")
-    .select("id, customer_name, order_type, total_price, items")
+    .select(ORDER_DETAILS_COLUMNS)
     .eq("id", parsed.orderId)
-    .single();
+    .limit(1);
 
-  if (orderDetailsError || !orderDetails) {
+  let orderDetails: OrderDetails | null =
+    Array.isArray(orderRows) && orderRows.length > 0 ? (orderRows[0] as OrderDetails) : null;
+  let orderDetailsSource: "orders" | "orders_archive" | null = orderDetails ? "orders" : null;
+  let archiveOrderError: { code: string | null; message: string | null } | null = null;
+
+  if (!orderDetails) {
+    const { data: archivedOrderRows, error: archivedOrderError } = await supabaseAdmin
+      .from("orders_archive")
+      .select(ORDER_DETAILS_COLUMNS)
+      .eq("id", parsed.orderId)
+      .limit(1);
+
+    if (archivedOrderError) {
+      archiveOrderError = {
+        code: archivedOrderError.code ?? null,
+        message: archivedOrderError.message ?? null
+      };
+    }
+
+    if (Array.isArray(archivedOrderRows) && archivedOrderRows.length > 0) {
+      orderDetails = archivedOrderRows[0] as OrderDetails;
+      orderDetailsSource = "orders_archive";
+    }
+  }
+
+  if (orderDetailsError || archiveOrderError || !orderDetails) {
     console.error("[telegram-webhook] Supabase select error", {
       code: orderDetailsError?.code ?? null,
       message: orderDetailsError?.message ?? null,
-      hasOrderDetails: Boolean(orderDetails)
+      archiveCode: archiveOrderError?.code ?? null,
+      archiveMessage: archiveOrderError?.message ?? null,
+      hasOrderDetails: Boolean(orderDetails),
+      detailsSource: orderDetailsSource,
+      status: friendlyStatus
     });
+
+    if (friendlyStatus === "completed") {
+      await answerCallbackQuery(botToken, callbackQueryId, "Order marked as completed.");
+
+      if (chatId !== null && messageId !== null) {
+        const fallbackText = buildCompletedFallbackMessage(parsed.orderId);
+        await editMessageText(botToken, chatId, messageId, fallbackText, {
+          inline_keyboard: []
+        });
+      } else {
+        console.warn("[telegram-webhook] completed editMessageText skipped due to missing ids", {
+          hasChatId: chatId !== null,
+          hasMessageId: messageId !== null
+        });
+      }
+
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
     await answerCallbackQuery(botToken, callbackQueryId, "Order updated but details could not be refreshed.");
     return NextResponse.json({ ok: true }, { status: 200 });
   }
@@ -353,7 +429,7 @@ export async function POST(request: Request) {
   await answerCallbackQuery(botToken, callbackQueryId, `Order marked as ${friendlyStatus}.`);
 
   if (chatId !== null && messageId !== null) {
-    const text = buildEditedMessage(orderDetails as OrderDetails, friendlyStatus);
+    const text = buildEditedMessage(orderDetails, friendlyStatus);
     const inlineKeyboard = buildInlineKeyboard(orderDetails.id, friendlyStatus);
     await editMessageText(botToken, chatId, messageId, text, {
       inline_keyboard: inlineKeyboard

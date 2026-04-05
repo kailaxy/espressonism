@@ -278,6 +278,7 @@ function notifyTelegramOrderPlaced(payload: {
   orderType: OrderType;
   items: Array<{ name: string; quantity: number; size: SizeOption }>;
   totalPrice: number;
+  specialInstructions?: string;
 }): void {
   try {
     void fetch("/api/telegram", {
@@ -826,7 +827,8 @@ export default function OrderPage() {
         quantity: line.quantity,
         size: line.size
       })),
-      totalPrice: grandTotal
+      totalPrice: grandTotal,
+      specialInstructions: specialInstructions.trim()
     });
   };
 

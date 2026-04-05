@@ -15,6 +15,7 @@ type DashboardOrder = {
   customer_phone: string | null;
   order_type: string | null;
   delivery_address: string | null;
+  special_instructions: string | null;
   payment_method: string | null;
   gcash_reference: string | null;
   items: unknown;
@@ -97,7 +98,7 @@ type AdminNotice = {
 };
 
 const ORDER_SELECT_FIELDS =
-  "id, customer_name, customer_phone, order_type, delivery_address, payment_method, gcash_reference, items, total_price, status, created_at";
+  "id, customer_name, customer_phone, order_type, delivery_address, special_instructions, payment_method, gcash_reference, items, total_price, status, created_at";
 const MENU_ITEM_SELECT_FIELDS = "*";
 const TODAY_HIGHLIGHT_SELECT_FIELDS = "id, menu_item_id, created_at";
 const TODAY_AT_BAR_SELECT_FIELDS = "id, title, description, dose, extraction_time, brew_temp, guest_score";
@@ -1445,6 +1446,7 @@ export default function AdminDashboardPage() {
                         const items = normalizeOrderItems(order.items);
                         const isDelivery = order.order_type === "delivery";
                         const isGcash = order.payment_method === "gcash";
+                        const specialInstructions = order.special_instructions?.trim() || "";
                         const actionConfig = getActionConfig(order.status);
                         const isUpdating = updatingOrderId === order.id;
 
@@ -1475,6 +1477,10 @@ export default function AdminDashboardPage() {
                                 <strong>Pay at Counter</strong>
                               )}
                             </div>
+
+                            {specialInstructions ? (
+                              <p className="barista-delivery-address">Special instructions: {specialInstructions}</p>
+                            ) : null}
 
                             <ul className="barista-items-list" aria-label="Order items">
                               {items.length === 0 ? (

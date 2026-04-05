@@ -30,6 +30,14 @@ function parseRequiredString(value: unknown): string | null {
   return value.trim();
 }
 
+function parseOptionalString(value: unknown): string | null {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  return value.trim();
+}
+
 function parseTotalPrice(value: unknown): string | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value.toFixed(2);
@@ -148,18 +156,30 @@ function parseItems(items: unknown): string[] | null {
   return lines as string[];
 }
 
-function buildMessage(customerName: string, orderType: string, totalPrice: string, itemLines: string[]): string {
+function buildMessage(
+  customerName: string,
+  orderType: string,
+  totalPrice: string,
+  itemLines: string[],
+  specialInstructions: string | null
+): string {
   const displayType = normalizeOrderTypeLabel(orderType);
   const displayTotal = formatTotalForDisplay(totalPrice);
 
-  const message = [
+  const lines = [
     "🚨 NEW ORDER! 🚨",
     `Name: ${customerName}`,
     `Type: ${displayType}`,
     `Total: ${displayTotal}`,
     "Items:",
     ...itemLines
-  ].join("\n");
+  ];
+
+  if (specialInstructions) {
+    lines.push("Special Instructions:", specialInstructions);
+  }
+
+  const message = lines.join("\n");
 
   if (message.length <= TELEGRAM_MESSAGE_MAX) {
     return message;
@@ -240,6 +260,7 @@ export async function POST(request: Request) {
   const orderId = parseRequiredString(payload.orderId);
   const totalPrice = parseTotalPrice(payload.totalPrice);
   const itemLines = parseItems(payload.items);
+  const specialInstructions = parseOptionalString(payload.specialInstructions);
 
   if (!customerName || !orderType || !orderId || !totalPrice || !itemLines) {
     console.warn("[telegram-api] payload invalid", {
@@ -271,7 +292,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const text = buildMessage(customerName, orderType, totalPrice, itemLines);
+  const text = buildMessage(customerName, orderType, totalPrice, itemLines, specialInstructions);
 
   let telegramResponse: Response;
 
