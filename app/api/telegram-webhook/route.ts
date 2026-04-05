@@ -1,9 +1,17 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
-type CallbackAction = "prep" | "ready";
-type DatabaseOrderStatus = "brewing" | "ready";
-type FriendlyOrderStatus = "preparing" | "ready";
+type CallbackAction = "prep" | "ready" | "complete";
+type DatabaseOrderStatus = "brewing" | "ready" | "completed";
+type FriendlyOrderStatus = "preparing" | "ready" | "completed";
+
+type OrderDetails = {
+  id: string;
+  customer_name: string;
+  order_type: string;
+  total_price: number | string;
+  items: unknown;
+};
 
 type TelegramApiResult = {
   ok?: boolean;
@@ -31,7 +39,7 @@ function parseCallbackData(data: unknown): { action: CallbackAction; orderId: st
   const action = trimmed.slice(0, separatorIndex);
   const orderId = trimmed.slice(separatorIndex + 1).trim();
 
-  if ((action !== "prep" && action !== "ready") || orderId.length === 0) {
+  if ((action !== "prep" && action !== "ready" && action !== "complete") || orderId.length === 0) {
     return null;
   }
 
@@ -43,7 +51,11 @@ function mapActionToDatabaseStatus(action: CallbackAction): DatabaseOrderStatus 
     return "brewing";
   }
 
-  return "ready";
+  if (action === "ready") {
+    return "ready";
+  }
+
+  return "completed";
 }
 
 function mapActionToFriendlyStatus(action: CallbackAction): FriendlyOrderStatus {
@@ -51,15 +63,121 @@ function mapActionToFriendlyStatus(action: CallbackAction): FriendlyOrderStatus 
     return "preparing";
   }
 
-  return "ready";
-}
-
-function buildEditedMessage(orderId: string, status: FriendlyOrderStatus): string {
-  if (status === "preparing") {
-    return `Order ${orderId} is now being prepared.`;
+  if (action === "ready") {
+    return "ready";
   }
 
-  return `Order ${orderId} is now ready.`;
+  return "completed";
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function normalizeOrderTypeLabel(orderType: string): string {
+  const normalized = orderType.trim().toLowerCase();
+
+  if (normalized === "pickup" || normalized === "pick-up") {
+    return "Pickup";
+  }
+
+  if (normalized === "delivery") {
+    return "Delivery";
+  }
+
+  return orderType;
+}
+
+function formatTotalForDisplay(totalPrice: number | string): string {
+  if (typeof totalPrice === "number" && Number.isFinite(totalPrice)) {
+    return `₱${totalPrice.toFixed(2)}`;
+  }
+
+  const trimmed = String(totalPrice).trim();
+  const withoutPeso = trimmed.replace(/^₱\s*/, "");
+  const numericValue = Number(withoutPeso);
+
+  if (Number.isFinite(numericValue)) {
+    return `₱${numericValue.toFixed(2)}`;
+  }
+
+  if (trimmed.startsWith("₱")) {
+    return trimmed;
+  }
+
+  return `₱${trimmed}`;
+}
+
+function formatItemsForDisplay(items: unknown): string {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "-";
+  }
+
+  const lines = items.map((item, index) => {
+    if (typeof item === "string") {
+      return `- ${item.trim()}`;
+    }
+
+    if (!isRecord(item)) {
+      return `- Item ${index + 1}`;
+    }
+
+    const nameValue = item.name;
+    const quantityValue = item.quantity;
+
+    const name = typeof nameValue === "string" && nameValue.trim().length > 0 ? nameValue.trim() : `Item ${index + 1}`;
+    const quantity = typeof quantityValue === "number" && Number.isFinite(quantityValue) ? quantityValue : null;
+
+    return quantity !== null && quantity > 0 ? `- ${quantity}x ${name}` : `- ${name}`;
+  });
+
+  return lines.join("\n");
+}
+
+function getStatusHeader(status: FriendlyOrderStatus): string {
+  if (status === "preparing") {
+    return "☕️ PREPARING ☕️";
+  }
+
+  if (status === "ready") {
+    return "✅ READY FOR PICKUP ✅";
+  }
+
+  return "🏁 ORDER COMPLETED 🏁";
+}
+
+function buildEditedMessage(order: OrderDetails, status: FriendlyOrderStatus): string {
+  const displayType = normalizeOrderTypeLabel(order.order_type);
+  const displayTotal = formatTotalForDisplay(order.total_price);
+  const items = formatItemsForDisplay(order.items);
+
+  return [
+    `<b>${getStatusHeader(status)}</b>`,
+    "",
+    `<b>Name:</b> ${escapeHtml(order.customer_name)}`,
+    `<b>Type:</b> ${escapeHtml(displayType)}`,
+    `<b>Total:</b> ${escapeHtml(displayTotal)}`,
+    "<b>Items:</b>",
+    escapeHtml(items),
+    `<b>Order ID:</b> ${escapeHtml(order.id)}`
+  ].join("\n");
+}
+
+function buildInlineKeyboard(orderId: string, status: FriendlyOrderStatus): Array<Array<{ text: string; callback_data: string }>> {
+  if (status === "preparing") {
+    return [[{ text: "✅ Mark as Ready", callback_data: `ready_${orderId}` }]];
+  }
+
+  if (status === "ready") {
+    return [[{ text: "🏁 Complete Order", callback_data: `complete_${orderId}` }]];
+  }
+
+  return [];
 }
 
 async function callTelegramMethod<TPayload extends Record<string, unknown>>(
@@ -113,13 +231,15 @@ async function editMessageText(
   botToken: string,
   chatId: number,
   messageId: number,
-  text: string
+  text: string,
+  replyMarkup: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }
 ): Promise<void> {
   await callTelegramMethod(botToken, "editMessageText", {
     chat_id: chatId,
     message_id: messageId,
     text,
-    reply_markup: { inline_keyboard: [] }
+    parse_mode: "HTML",
+    reply_markup: replyMarkup
   });
 }
 
@@ -214,11 +334,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
+  const { data: orderDetails, error: orderDetailsError } = await supabaseAdmin
+    .from("orders")
+    .select("id, customer_name, order_type, total_price, items")
+    .eq("id", parsed.orderId)
+    .single();
+
+  if (orderDetailsError || !orderDetails) {
+    console.error("[telegram-webhook] Supabase select error", {
+      code: orderDetailsError?.code ?? null,
+      message: orderDetailsError?.message ?? null,
+      hasOrderDetails: Boolean(orderDetails)
+    });
+    await answerCallbackQuery(botToken, callbackQueryId, "Order updated but details could not be refreshed.");
+    return NextResponse.json({ ok: true }, { status: 200 });
+  }
+
   await answerCallbackQuery(botToken, callbackQueryId, `Order marked as ${friendlyStatus}.`);
 
   if (chatId !== null && messageId !== null) {
-    const text = buildEditedMessage(parsed.orderId, friendlyStatus);
-    await editMessageText(botToken, chatId, messageId, text);
+    const text = buildEditedMessage(orderDetails as OrderDetails, friendlyStatus);
+    const inlineKeyboard = buildInlineKeyboard(orderDetails.id, friendlyStatus);
+    await editMessageText(botToken, chatId, messageId, text, {
+      inline_keyboard: inlineKeyboard
+    });
   } else {
     console.warn("[telegram-webhook] editMessageText skipped due to missing ids", {
       hasChatId: chatId !== null,
