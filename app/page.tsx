@@ -226,7 +226,7 @@ export default function Home() {
             aria-hidden
             className="order-cta-bg-image"
             fill
-            sizes="(max-width: 760px) 100vw, 1200px"
+            sizes="(max-width: 760px) 100vw, (max-width: 1280px) 92vw, 1200px"
           />
           <div className="order-cta-content">
             <h2>Order Now</h2>

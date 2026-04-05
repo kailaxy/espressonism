@@ -165,7 +165,7 @@ export function MenuGrid({ items, quantities, onSelectItem }: MenuGridProps) {
                   alt={item.name}
                   className="order-item-image"
                   fill
-                  sizes="(max-width: 900px) 100vw, 33vw"
+                  sizes="(max-width: 640px) 100vw, (max-width: 830px) 50vw, (max-width: 1280px) 33vw, 300px"
                   unoptimized
                 />
               ) : (
@@ -264,7 +264,7 @@ export function ModifierModal({
             className="order-modal-item-image"
             width={960}
             height={540}
-            sizes="(max-width: 680px) 100vw, 560px"
+            sizes="(max-width: 680px) calc(100vw - 2rem), 560px"
             unoptimized
           />
         ) : null}

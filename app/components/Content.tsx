@@ -15,7 +15,13 @@ export function Gallery({ items }: GalleryProps) {
     <div className="gallery-grid">
       {items.map((item) => (
         <figure className="gallery-item" key={item.title}>
-          <Image src={item.image} alt={item.title} width={1200} height={900} sizes="(max-width: 760px) 100vw, (max-width: 980px) 50vw, 33vw" />
+          <Image
+            src={item.image}
+            alt={item.title}
+            width={1200}
+            height={900}
+            sizes="(max-width: 760px) 100vw, (max-width: 980px) 50vw, (max-width: 1320px) 33vw, 360px"
+          />
           <figcaption>
             <strong>{item.title}</strong>
             <span>{item.note}</span>

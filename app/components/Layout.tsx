@@ -1,8 +1,9 @@
 "use client";
 
-import { MouseEvent, ReactNode } from "react";
+import { MouseEvent, ReactNode, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { smoothScrollToElement } from "../lib/smoothScroll";
+import { MobileMenuButton } from "./UI";
 
 interface NavbarProps {
   cartCount: number;
@@ -13,6 +14,7 @@ interface NavbarProps {
 export function Navbar({ cartCount, onCartClick, hrefPrefix = "" }: NavbarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const handleBrandClick = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
@@ -38,6 +40,11 @@ export function Navbar({ cartCount, onCartClick, hrefPrefix = "" }: NavbarProps)
     router.push("/");
   };
 
+  const handleMenuLinkClick = (event: MouseEvent<HTMLAnchorElement>, sectionId: string) => {
+    handleNavToSection(event, sectionId);
+    setIsMenuOpen(false);
+  };
+
   return (
     <header className="topbar" aria-label="Main navigation">
       <a
@@ -60,12 +67,14 @@ export function Navbar({ cartCount, onCartClick, hrefPrefix = "" }: NavbarProps)
         ESPRESSONISM
       </a>
 
-      <nav aria-label="Section links" className="menu">
-        <a href={`${hrefPrefix}#method`} onClick={(event) => handleNavToSection(event, "method")}>Method</a>
-        <a href={`${hrefPrefix}#gallery`} onClick={(event) => handleNavToSection(event, "gallery")}>Gallery</a>
-        <a href={`${hrefPrefix}#testimonials`} onClick={(event) => handleNavToSection(event, "testimonials")}>Stories</a>
-        <a href={`${hrefPrefix}#loyalty`} onClick={(event) => handleNavToSection(event, "loyalty")}>Loyalty</a>
-        <a href={`${hrefPrefix}#visit`} onClick={(event) => handleNavToSection(event, "visit")}>Visit</a>
+      <MobileMenuButton isOpen={isMenuOpen} onToggle={() => setIsMenuOpen((open) => !open)} />
+
+      <nav id="menu-links" aria-label="Section links" className="menu" data-open={isMenuOpen}>
+        <a href={`${hrefPrefix}#method`} onClick={(event) => handleMenuLinkClick(event, "method")}>Method</a>
+        <a href={`${hrefPrefix}#gallery`} onClick={(event) => handleMenuLinkClick(event, "gallery")}>Gallery</a>
+        <a href={`${hrefPrefix}#testimonials`} onClick={(event) => handleMenuLinkClick(event, "testimonials")}>Stories</a>
+        <a href={`${hrefPrefix}#loyalty`} onClick={(event) => handleMenuLinkClick(event, "loyalty")}>Loyalty</a>
+        <a href={`${hrefPrefix}#visit`} onClick={(event) => handleMenuLinkClick(event, "visit")}>Visit</a>
       </nav>
 
       <div className="topbar-actions">

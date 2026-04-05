@@ -93,9 +93,14 @@ Use `.env.example` as the template.
 Required:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` (server-only, required by webhook status updates)
+- `TELEGRAM_BOT_TOKEN` (server-only)
+- `TELEGRAM_CHAT_ID` (server-only)
 
 Optional:
 - `NEXT_PUBLIC_ADMIN_PIN`
+
+Note: Keep `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID` without the `NEXT_PUBLIC_` prefix.
 
 Fallback aliases supported by `supabaseClient.js`:
 - `VITE_SUPABASE_URL`
@@ -196,7 +201,12 @@ In Project Settings -> Environment Variables, set:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
 - `NEXT_PUBLIC_ADMIN_PIN` (recommended)
+
+`SUPABASE_SERVICE_ROLE_KEY` is required by the webhook route for Telegram status updates and must remain server-only (do not use `NEXT_PUBLIC_`).
 
 Add these for at least `Production`. If you use Preview deployments, add them for `Preview` as well.
 

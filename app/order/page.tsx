@@ -272,6 +272,34 @@ function orderStatusLabel(status: OrderStatus): string {
   return "Cancelled";
 }
 
+function notifyTelegramOrderPlaced(payload: {
+  orderId: string;
+  customerName: string;
+  orderType: OrderType;
+  items: Array<{ name: string; quantity: number; size: SizeOption }>;
+  totalPrice: number;
+}): void {
+  try {
+    void fetch("/api/telegram", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    })
+      .then((response) => {
+        if (!response.ok) {
+          console.error("Telegram notification failed.", { status: response.status });
+        }
+      })
+      .catch((error) => {
+        console.error("Telegram notification failed.", error);
+      });
+  } catch (error) {
+    console.error("Telegram notification failed.", error);
+  }
+}
+
 export default function OrderPage() {
   const [activeCategory, setActiveCategory] = useState<"all" | MenuItem["category"]>("all");
   const [menuData, setMenuData] = useState<MenuItem[]>([]);
@@ -525,10 +553,7 @@ export default function OrderPage() {
       const drawerHeight = drawerElement.getBoundingClientRect().height;
       const measuredHandleHeight = historyHandleRef.current?.getBoundingClientRect().height ?? 0;
       const visibleHandleHeight = measuredHandleHeight > 0 ? measuredHandleHeight : 36;
-      const computedBottomRaw = window.getComputedStyle(drawerElement).bottom;
-      const computedBottom = Number.parseFloat(computedBottomRaw);
-      const bottomAnchorOffset = Number.isFinite(computedBottom) ? computedBottom : 0;
-      const closedOffset = Math.max(0, drawerHeight - visibleHandleHeight + bottomAnchorOffset);
+      const closedOffset = Math.max(0, drawerHeight - visibleHandleHeight);
       setHistoryDrawerClosedOffset(closedOffset);
     };
 
@@ -791,6 +816,18 @@ export default function OrderPage() {
     setOrderPlaced(true);
     setCheckoutStep("tracking");
     setIsCheckingOut(false);
+
+    notifyTelegramOrderPlaced({
+      orderId: data.id,
+      customerName: customerName.trim(),
+      orderType,
+      items: cartLines.map((line) => ({
+        name: line.name,
+        quantity: line.quantity,
+        size: line.size
+      })),
+      totalPrice: grandTotal
+    });
   };
 
   const resetHistorySwipeState = () => {
