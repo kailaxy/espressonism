@@ -1126,9 +1126,6 @@ export default function OrderPage() {
                       ))}
                     </div>
                   )}
-                  <p className="order-highlight-meta">
-                    Cart now has {cartCount} item{cartCount === 1 ? "" : "s"}.
-                  </p>
                   {isHighlightsLoading ? (
                     <SkeletonGroup className="order-highlight-meta">
                       <Skeleton type="text" width="52%" />

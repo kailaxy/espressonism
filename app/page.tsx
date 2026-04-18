@@ -62,13 +62,13 @@ function parsePromotionalSlides(value: unknown): PromotionalCarouselSlide[] {
   if (!Array.isArray(value)) return [];
 
   return value
-    .map((item) => {
+    .map((item): PromotionalCarouselSlide | null => {
       const row = (item ?? {}) as PromotionalSlideRow;
       const imageUrl = nonEmptyString(row.image_url);
       if (!imageUrl) return null;
 
       return {
-        id: nonEmptyString(row.id),
+        id: nonEmptyString(row.id) ?? undefined,
         imageUrl,
         title: nonEmptyString(row.title) ?? undefined,
         description: nonEmptyString(row.description) ?? undefined,
@@ -299,6 +299,7 @@ export default function Home() {
         title="Brew Loud."
         subtitle="Small Batch | City Roasted"
         description="Espressonism turns coffee into a daily ceremony. Precision extraction, expressive flavor notes, and a space designed for people who love bold craft."
+        cardClassName="hero-card--promo"
         actions={[
           { label: "Explore Signature Drinks", variant: "primary", onClick: handleExploreSignature },
           { label: "Learn About Beans", variant: "ghost", onClick: handleExploreBeans }

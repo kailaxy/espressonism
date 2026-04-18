@@ -832,6 +832,7 @@ export default function AdminDashboardPage() {
 
   const [todayAtBarForm, setTodayAtBarForm] = useState<TodayAtBarForm>(EMPTY_TODAY_AT_BAR_FORM);
   const [collapsedPromotionalSlideIds, setCollapsedPromotionalSlideIds] = useState<Record<string, boolean>>({});
+  const [lastTouchedPromoSlideId, setLastTouchedPromoSlideId] = useState<string | null>(null);
   const [isTodayAtBarLoading, setIsTodayAtBarLoading] = useState(false);
   const [todayAtBarError, setTodayAtBarError] = useState<string | null>(null);
   const [isSavingTodayAtBar, setIsSavingTodayAtBar] = useState(false);
@@ -936,13 +937,10 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     setCollapsedPromotionalSlideIds((previousState) => {
-      const activeSlideIds = new Set(todayAtBarForm.carouselSlides.map((slide) => slide.id));
       const nextState: Record<string, boolean> = {};
 
-      for (const [slideId, isCollapsed] of Object.entries(previousState)) {
-        if (activeSlideIds.has(slideId) && isCollapsed) {
-          nextState[slideId] = true;
-        }
+      for (const slide of todayAtBarForm.carouselSlides) {
+        nextState[slide.id] = previousState[slide.id] ?? true;
       }
 
       return nextState;
@@ -1322,6 +1320,7 @@ export default function AdminDashboardPage() {
       }
 
       setTodayAtBarForm(mapTodayAtBarRowToForm(data as TodayAtBarRow));
+      setLastTouchedPromoSlideId(null);
       setIsTodayAtBarLoading(false);
     };
 
@@ -1540,6 +1539,7 @@ export default function AdminDashboardPage() {
     setDeletingHighlightId(null);
     setTodayAtBarForm(EMPTY_TODAY_AT_BAR_FORM);
     setCollapsedPromotionalSlideIds({});
+    setLastTouchedPromoSlideId(null);
     setTodayAtBarError(null);
     setActivePromoSlideId(null);
     setIsPromoImagePickerOpen(false);
@@ -1566,10 +1566,14 @@ export default function AdminDashboardPage() {
   };
 
   const togglePromotionalSlideCard = (slideId: string) => {
-    setCollapsedPromotionalSlideIds((previousState) => ({
-      ...previousState,
-      [slideId]: !previousState[slideId]
-    }));
+    setCollapsedPromotionalSlideIds((previousState) => {
+      const isCurrentlyCollapsed = previousState[slideId] !== false;
+
+      return {
+        ...previousState,
+        [slideId]: !isCurrentlyCollapsed
+      };
+    });
   };
 
   const updateOrderStatus = async (orderId: string, newStatus: ActionConfig["nextStatus"]) => {
@@ -2085,10 +2089,17 @@ export default function AdminDashboardPage() {
   };
 
   const handleAddTodayAtBarSlide = () => {
+    const newSlide = createTodayAtBarSlideDraft(Date.now());
+
     setTodayAtBarForm((previousForm) => ({
       ...previousForm,
-      carouselSlides: [...previousForm.carouselSlides, createTodayAtBarSlideDraft(Date.now())]
+      carouselSlides: [...previousForm.carouselSlides, newSlide]
     }));
+    setCollapsedPromotionalSlideIds((previousState) => ({
+      ...previousState,
+      [newSlide.id]: true
+    }));
+    setLastTouchedPromoSlideId(newSlide.id);
   };
 
   const handleUpdateTodayAtBarSlide = (
@@ -2107,6 +2118,7 @@ export default function AdminDashboardPage() {
           : slide
       )
     }));
+    setLastTouchedPromoSlideId(slideId);
   };
 
   const handleRemoveTodayAtBarSlide = (slideId: string) => {
@@ -2114,6 +2126,8 @@ export default function AdminDashboardPage() {
       ...previousForm,
       carouselSlides: previousForm.carouselSlides.filter((slide) => slide.id !== slideId)
     }));
+
+    setLastTouchedPromoSlideId((previousSlideId) => (previousSlideId === slideId ? null : previousSlideId));
   };
 
   const handleSaveTodayAtBar = async (event: FormEvent<HTMLFormElement>) => {
@@ -2155,11 +2169,26 @@ export default function AdminDashboardPage() {
       return;
     }
 
+    const parsedSlides = parseTodayAtBarCarouselSlides(normalizedCarouselSlides);
+
     setTodayAtBarForm((previousForm) => ({
       ...previousForm,
       carouselIntervalMs: String(normalizedCarouselIntervalMs),
-      carouselSlides: parseTodayAtBarCarouselSlides(normalizedCarouselSlides)
+      carouselSlides: parsedSlides
     }));
+    setCollapsedPromotionalSlideIds((previousState) => {
+      const nextState: Record<string, boolean> = {};
+
+      for (const slide of parsedSlides) {
+        nextState[slide.id] = previousState[slide.id] ?? true;
+      }
+
+      if (lastTouchedPromoSlideId && lastTouchedPromoSlideId in nextState) {
+        nextState[lastTouchedPromoSlideId] = true;
+      }
+
+      return nextState;
+    });
     setIsSavingTodayAtBar(false);
     setAdminNotice({ tone: "success", message: "Landing promotional content saved." });
   };
@@ -2861,25 +2890,28 @@ export default function AdminDashboardPage() {
                   {todayAtBarForm.carouselSlides.length === 0 ? (
                     <p className="barista-image-helper">No slides added yet.</p>
                   ) : (
-                    todayAtBarForm.carouselSlides.map((slide, index) => (
+                    todayAtBarForm.carouselSlides.map((slide, index) => {
+                      const isSlideCollapsed = collapsedPromotionalSlideIds[slide.id] !== false;
+
+                      return (
                       <article key={slide.id} className="barista-promo-slide-card">
                         <header className="barista-promo-slide-card-head">
                           <h3 className="barista-promo-slide-card-title">Slide {index + 1}</h3>
                           <button
                             type="button"
                             className="barista-order-collapse-btn barista-promo-slide-collapse-btn"
-                            aria-expanded={!collapsedPromotionalSlideIds[slide.id]}
+                            aria-expanded={!isSlideCollapsed}
                             aria-controls={`todayBarSlideFields-${slide.id}`}
                             onClick={() => togglePromotionalSlideCard(slide.id)}
                           >
-                            {collapsedPromotionalSlideIds[slide.id] ? "Expand" : "Collapse"}
+                            {isSlideCollapsed ? "Expand" : "Collapse"}
                           </button>
                         </header>
 
                         <div
                           id={`todayBarSlideFields-${slide.id}`}
                           className="barista-manager-form-grid barista-promo-slide-fields"
-                          hidden={Boolean(collapsedPromotionalSlideIds[slide.id])}
+                          hidden={isSlideCollapsed}
                         >
                           <label className="barista-form-field barista-form-field-full" htmlFor={`todayBarSlideImage-${slide.id}`}>
                             Slide {index + 1} Image URL
@@ -2939,7 +2971,8 @@ export default function AdminDashboardPage() {
                           </button>
                         </div>
                       </article>
-                    ))
+                      );
+                    })
                   )}
 
                   <button type="button" className="barista-logout-btn" onClick={handleAddTodayAtBarSlide}>

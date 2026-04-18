@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 
 export type PromotionalCarouselSlide = {
@@ -30,9 +29,6 @@ interface PromoBannerProps {
 	content?: PromotionalContent | null;
 }
 
-const DEFAULT_PROMOTIONAL_TITLE = "Featured: The Espressonism Signature";
-const DEFAULT_PROMOTIONAL_CTA_LABEL = "Order Now";
-const DEFAULT_PROMOTIONAL_CTA_HREF = "/order";
 const SWIPE_THRESHOLD_PX = 46;
 
 function isNonEmpty(value: string | null | undefined): value is string {
@@ -46,43 +42,7 @@ function isPermittedImageUrl(url: string): boolean {
 	return value.startsWith("/") || value.startsWith("http://") || value.startsWith("https://");
 }
 
-function sanitizeHref(href: string | undefined): string {
-	if (!isNonEmpty(href)) return DEFAULT_PROMOTIONAL_CTA_HREF;
-	const value = href.trim();
-	if (value.startsWith("/") || value.startsWith("http://") || value.startsWith("https://")) return value;
-	return DEFAULT_PROMOTIONAL_CTA_HREF;
-}
-
-function isExternalHref(href: string): boolean {
-	return href.startsWith("http://") || href.startsWith("https://");
-}
-
-function BannerCta({ href, label }: { href: string; label: string }) {
-	if (isExternalHref(href)) {
-		return (
-			<a href={href} className="promo-banner__button" target="_blank" rel="noreferrer noopener">
-				{label}
-			</a>
-		);
-	}
-
-	return (
-		<Link href={href} className="promo-banner__button">
-			{label}
-		</Link>
-	);
-}
-
 export function PromoBanner({ content }: PromoBannerProps) {
-	const promoTitle = isNonEmpty(content?.title) ? content.title.trim() : DEFAULT_PROMOTIONAL_TITLE;
-	const hasSupplementaryLine = isNonEmpty(content?.description);
-	const supplementaryLine = hasSupplementaryLine
-		? content?.description.trim()
-		: [content?.dose, content?.extractionTime, content?.brewTemp, content?.guestScore]
-				.filter(isNonEmpty)
-				.map((value) => value.trim())
-				.join(" • ");
-
 	const validSlides = useMemo(
 		() =>
 			(content?.carouselSlides ?? [])
@@ -90,17 +50,20 @@ export function PromoBanner({ content }: PromoBannerProps) {
 				.map((slide) => ({
 					...slide,
 					imageUrl: slide.imageUrl.trim(),
+					altText: isNonEmpty(slide.altText) ? slide.altText.trim() : undefined,
 					title: isNonEmpty(slide.title) ? slide.title.trim() : undefined,
 					description: isNonEmpty(slide.description) ? slide.description.trim() : undefined,
-					altText: isNonEmpty(slide.altText) ? slide.altText.trim() : undefined,
 					ctaLabel: isNonEmpty(slide.ctaLabel) ? slide.ctaLabel.trim() : undefined,
-					ctaHref: sanitizeHref(slide.ctaHref)
+					ctaHref: slide.ctaHref
 				})),
 		[content?.carouselSlides]
 	);
 
 	const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-	const [prefersReducedMotion, setPrefersReducedMotion] = useState(true);
+	const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
+		if (typeof window === "undefined" || !window.matchMedia) return false;
+		return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	});
 	const touchStartXRef = useRef<number | null>(null);
 
 	const hasCarousel = validSlides.length > 1;
@@ -112,10 +75,18 @@ export function PromoBanner({ content }: PromoBannerProps) {
 		const updateMotionPreference = () => setPrefersReducedMotion(mediaQuery.matches);
 
 		updateMotionPreference();
-		mediaQuery.addEventListener("change", updateMotionPreference);
+
+		if (typeof mediaQuery.addEventListener === "function") {
+			mediaQuery.addEventListener("change", updateMotionPreference);
+			return () => {
+				mediaQuery.removeEventListener("change", updateMotionPreference);
+			};
+		}
+
+		mediaQuery.addListener(updateMotionPreference);
 
 		return () => {
-			mediaQuery.removeEventListener("change", updateMotionPreference);
+			mediaQuery.removeListener(updateMotionPreference);
 		};
 	}, []);
 
@@ -125,23 +96,50 @@ export function PromoBanner({ content }: PromoBannerProps) {
 		}
 	}, [activeSlideIndex, validSlides.length]);
 
-	const intervalMs = Math.min(Math.max(content?.carouselIntervalMs ?? 5500, 2200), 15000);
+	const rawIntervalMs = Number(content?.carouselIntervalMs);
+	const intervalMs = Number.isFinite(rawIntervalMs)
+		? Math.min(Math.max(rawIntervalMs, 2200), 15000)
+		: 5500;
 	const autoplayEnabled = hasCarousel && !prefersReducedMotion && content?.carouselAutoplay !== false;
+
+	const goToSlide = useCallback(
+		(index: number) => {
+			if (!hasCarousel) return;
+			const normalized = (index + validSlides.length) % validSlides.length;
+			setActiveSlideIndex(normalized);
+		},
+		[hasCarousel, validSlides.length]
+	);
+
+	const advanceSlide = useCallback(
+		(step: number) => {
+			if (!hasCarousel) return;
+			setActiveSlideIndex((currentIndex) => {
+				const nextIndex = currentIndex + step;
+				return (nextIndex + validSlides.length) % validSlides.length;
+			});
+		},
+		[hasCarousel, validSlides.length]
+	);
 
 	useEffect(() => {
 		if (!autoplayEnabled) return;
 
 		const timer = window.setInterval(() => {
-			setActiveSlideIndex((currentIndex) => (currentIndex + 1) % validSlides.length);
+			advanceSlide(1);
 		}, intervalMs);
 
 		return () => window.clearInterval(timer);
-	}, [autoplayEnabled, intervalMs, validSlides.length]);
+	}, [advanceSlide, autoplayEnabled, intervalMs]);
 
-	const goToSlide = (index: number) => {
-		if (!hasCarousel) return;
-		const normalized = (index + validSlides.length) % validSlides.length;
-		setActiveSlideIndex(normalized);
+	const getSlideState = (index: number): "is-active" | "is-next" | "is-prev" | "is-hidden" => {
+		if (!hasCarousel) return index === activeSlideIndex ? "is-active" : "is-hidden";
+
+		const delta = (index - activeSlideIndex + validSlides.length) % validSlides.length;
+		if (delta === 0) return "is-active";
+		if (delta === 1) return "is-next";
+		if (delta === validSlides.length - 1) return "is-prev";
+		return "is-hidden";
 	};
 
 	const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
@@ -158,71 +156,53 @@ export function PromoBanner({ content }: PromoBannerProps) {
 
 		if (Math.abs(delta) < SWIPE_THRESHOLD_PX) return;
 		if (delta < 0) {
-			goToSlide(activeSlideIndex + 1);
+			advanceSlide(1);
 			return;
 		}
 
-		goToSlide(activeSlideIndex - 1);
+		advanceSlide(-1);
 	};
 
 	if (!hasSlides) {
 		return (
-			<section className="promo-banner" aria-labelledby="promo-banner-heading">
-				<div className="promo-banner__content">
-					<h2 id="promo-banner-heading" className="promo-banner__title">
-						{promoTitle}
-					</h2>
-					{isNonEmpty(supplementaryLine) ? <p className="promo-banner__meta">{supplementaryLine}</p> : null}
-					<BannerCta href={DEFAULT_PROMOTIONAL_CTA_HREF} label={DEFAULT_PROMOTIONAL_CTA_LABEL} />
+			<section className="promo-banner promo-banner--carousel" aria-label="Promotional banner">
+				<div className="promo-banner__viewport">
+					<div className="promo-banner__slide" aria-hidden="true" />
 				</div>
 			</section>
 		);
 	}
 
-	const activeSlide = validSlides[activeSlideIndex] ?? validSlides[0];
-	const activeTitle = activeSlide.title ?? promoTitle;
-	const activeMeta = activeSlide.description ?? supplementaryLine;
-	const activeCtaLabel = activeSlide.ctaLabel ?? DEFAULT_PROMOTIONAL_CTA_LABEL;
-	const activeCtaHref = activeSlide.ctaHref ?? DEFAULT_PROMOTIONAL_CTA_HREF;
 	return (
-		<section className="promo-banner promo-banner--carousel" aria-labelledby="promo-banner-heading">
+		<section className="promo-banner promo-banner--carousel" aria-label="Promotional banner carousel">
 			<div
-				className="promo-banner__slides"
-				style={{ transform: `translateX(-${activeSlideIndex * 100}%)` }}
+				className="promo-banner__viewport"
 				onTouchStart={handleTouchStart}
 				onTouchEnd={handleTouchEnd}
 			>
-				{validSlides.map((slide, index) => {
-					const slideAltText =
-						slide.altText ?? slide.title ?? promoTitle ?? "Featured drink from Espressonism";
+				<div className="promo-banner__slides">
+					{validSlides.map((slide, index) => {
+						const slideAltText = slide.altText ?? slide.title ?? "Promotional image from Espressonism";
+						const slideState = getSlideState(index);
 
-					return (
-						<div
-							className="promo-banner__slide"
-							key={slide.id ?? `${slide.imageUrl}-${index}`}
-							aria-hidden={index !== activeSlideIndex}
-						>
-							<Image
-								className="promo-banner__image"
-								src={slide.imageUrl}
-								alt={slideAltText}
-								fill
-								sizes="(max-width: 760px) 100vw, 38vw"
-								unoptimized
-							/>
-						</div>
-					);
-				})}
-			</div>
-
-			<div className="promo-banner__overlay" />
-
-			<div className="promo-banner__content promo-banner__content--carousel">
-				<h2 id="promo-banner-heading" className="promo-banner__title">
-					{activeTitle}
-				</h2>
-				{isNonEmpty(activeMeta) ? <p className="promo-banner__meta">{activeMeta}</p> : null}
-				<BannerCta href={activeCtaHref} label={activeCtaLabel} />
+						return (
+							<div
+								className={`promo-banner__slide ${slideState}`}
+								key={slide.id ?? `${slide.imageUrl}-${index}`}
+								aria-hidden={index !== activeSlideIndex}
+							>
+								<Image
+									className="promo-banner__image"
+									src={slide.imageUrl}
+									alt={slideAltText}
+									fill
+									sizes="(max-width: 760px) 100vw, 38vw"
+									unoptimized
+								/>
+							</div>
+						);
+					})}
+				</div>
 			</div>
 
 			{hasCarousel ? (
@@ -231,7 +211,7 @@ export function PromoBanner({ content }: PromoBannerProps) {
 						<button
 							type="button"
 							className="promo-banner__control"
-							onClick={() => goToSlide(activeSlideIndex - 1)}
+							onClick={() => advanceSlide(-1)}
 							aria-label="Previous promo slide"
 						>
 							<span aria-hidden="true">&#8249;</span>
@@ -239,7 +219,7 @@ export function PromoBanner({ content }: PromoBannerProps) {
 						<button
 							type="button"
 							className="promo-banner__control"
-							onClick={() => goToSlide(activeSlideIndex + 1)}
+							onClick={() => advanceSlide(1)}
 							aria-label="Next promo slide"
 						>
 							<span aria-hidden="true">&#8250;</span>

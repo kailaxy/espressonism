@@ -119,9 +119,12 @@ interface HeroProps {
   description: string;
   actions: Button[];
   cardContent: ReactNode;
+  cardClassName?: string;
 }
 
-export function Hero({ title, subtitle, description, actions, cardContent }: HeroProps) {
+export function Hero({ title, subtitle, description, actions, cardContent, cardClassName }: HeroProps) {
+  const resolvedCardClassName = cardClassName ? `hero-card ${cardClassName}` : "hero-card";
+
   return (
     <main className="hero">
       <section>
@@ -142,7 +145,7 @@ export function Hero({ title, subtitle, description, actions, cardContent }: Her
         </div>
       </section>
 
-      <aside className="hero-card intro intro-2" aria-label="Today highlights">
+      <aside className={`${resolvedCardClassName} intro intro-2`} aria-label="Today highlights">
         {cardContent}
       </aside>
     </main>
