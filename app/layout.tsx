@@ -14,11 +14,13 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const isProduction = process.env.NODE_ENV === "production";
+
   return (
     <html lang="en">
       <body>
         {children}
-        <Analytics />
+        {isProduction ? <Analytics /> : null}
       </body>
     </html>
   );

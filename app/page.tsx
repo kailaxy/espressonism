@@ -311,6 +311,7 @@ export default function Home() {
         <div className="order-cta-section order-cta-section-top">
           <Image
             src={orderCtaImage}
+            priority
             alt=""
             aria-hidden
             className="order-cta-bg-image"

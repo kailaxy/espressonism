@@ -1533,8 +1533,9 @@ a {
   width: 100%;
   height: clamp(22rem, 52vw, 31rem);
   min-height: clamp(22rem, 52vw, 31rem);
-  border-radius: 16px;
+  border-radius: clamp(1.3rem, 3.4vw, 2rem);
   overflow: hidden;
+  -webkit-mask-image: -webkit-radial-gradient(white, black);
   background: transparent;
 }
 
@@ -1553,20 +1554,18 @@ a {
   left: 50%;
   width: calc(100% - clamp(1.6rem, 6vw, 4rem));
   max-width: 100%;
-  border-radius: 14px;
+  border-radius: clamp(1.05rem, 2.8vw, 1.5rem);
   overflow: hidden;
-  transform: translateX(-50%) scale(0.9);
+  transform: translate3d(-50%, 0, 0) scale(0.84);
   opacity: 0;
-  visibility: hidden;
   pointer-events: none;
-  z-index: 1;
+  z-index: 0;
   will-change: transform, opacity;
   transition:
-    transform 760ms cubic-bezier(0.22, 1, 0.36, 1),
-    left 760ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 760ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 760ms ease,
-    visibility 0s linear 760ms;
+    transform 680ms cubic-bezier(0.2, 0.72, 0.16, 1),
+    left 680ms cubic-bezier(0.2, 0.72, 0.16, 1),
+    width 680ms cubic-bezier(0.2, 0.72, 0.16, 1),
+    opacity 620ms ease;
 }
 
 .promo-banner__image {
@@ -1583,32 +1582,42 @@ a {
 
 .promo-banner__slide.is-active {
   opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) scale(1);
+  transform: translate3d(-50%, 0, 0) scale(1);
+  pointer-events: auto;
   z-index: 3;
 }
 
 .promo-banner__slide.is-prev,
 .promo-banner__slide.is-next {
-  opacity: 0.42;
-  visibility: visible;
+  opacity: 0.56;
   width: calc(100% - clamp(5.2rem, 16vw, 9.6rem));
   z-index: 2;
 }
 
 .promo-banner__slide.is-prev {
   left: 16%;
-  transform: translateX(-50%) scale(0.94);
+  transform: translate3d(-50%, 0, 0) scale(0.91);
 }
 
 .promo-banner__slide.is-next {
   left: 84%;
-  transform: translateX(-50%) scale(0.94);
+  transform: translate3d(-50%, 0, 0) scale(0.91);
 }
 
 .promo-banner__slide.is-hidden {
   opacity: 0;
-  visibility: hidden;
+  left: 50%;
+  width: calc(100% - clamp(2.4rem, 8vw, 5.6rem));
+  transform: translate3d(-50%, 0, 0) scale(0.82);
+  z-index: 0;
+}
+
+.promo-banner--carousel .promo-banner__slide {
+  transition:
+    transform 680ms cubic-bezier(0.2, 0.72, 0.16, 1) !important,
+    left 680ms cubic-bezier(0.2, 0.72, 0.16, 1) !important,
+    width 680ms cubic-bezier(0.2, 0.72, 0.16, 1) !important,
+    opacity 620ms ease !important;
 }
 
 .promo-banner__content--carousel {
@@ -1730,7 +1739,7 @@ a {
   .promo-banner__slide.is-prev,
   .promo-banner__slide.is-next {
     width: calc(100% - clamp(3.4rem, 14vw, 5rem));
-    opacity: 0.34;
+    opacity: 0.45;
   }
 
   .promo-banner__slide.is-prev {
@@ -1743,13 +1752,13 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .promo-banner__slide {
-    transition: none;
-    transform: translateX(-50%);
+  .promo-banner--carousel .promo-banner__slide {
+    transition: none !important;
+    transform: translate3d(-50%, 0, 0) !important;
   }
 
-  .promo-banner__image {
-    transition: none;
+  .promo-banner--carousel .promo-banner__image {
+    transition: none !important;
     transform: none;
     filter: none;
   }

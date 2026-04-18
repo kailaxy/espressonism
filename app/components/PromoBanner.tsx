@@ -60,10 +60,7 @@ export function PromoBanner({ content }: PromoBannerProps) {
 	);
 
 	const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-	const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
-		if (typeof window === "undefined" || !window.matchMedia) return false;
-		return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-	});
+	const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 	const touchStartXRef = useRef<number | null>(null);
 
 	const hasCarousel = validSlides.length > 1;
@@ -165,7 +162,10 @@ export function PromoBanner({ content }: PromoBannerProps) {
 
 	if (!hasSlides) {
 		return (
-			<section className="promo-banner promo-banner--carousel" aria-label="Promotional banner">
+			<section
+				className="promo-banner promo-banner--carousel"
+				aria-label="Promotional banner"
+			>
 				<div className="promo-banner__viewport">
 					<div className="promo-banner__slide" aria-hidden="true" />
 				</div>
@@ -174,7 +174,10 @@ export function PromoBanner({ content }: PromoBannerProps) {
 	}
 
 	return (
-		<section className="promo-banner promo-banner--carousel" aria-label="Promotional banner carousel">
+		<section
+			className="promo-banner promo-banner--carousel"
+			aria-label="Promotional banner carousel"
+		>
 			<div
 				className="promo-banner__viewport"
 				onTouchStart={handleTouchStart}
