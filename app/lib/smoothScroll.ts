@@ -11,7 +11,16 @@ function easeInOutCubic(value: number): number {
 
 export function smoothScrollToElement(element: HTMLElement, options: SmoothScrollOptions = {}): void {
   const duration = options.duration ?? 650;
-  const offset = options.offset ?? 90;
+  const computedTopbarOffset = (() => {
+    const topbar = document.querySelector<HTMLElement>(".topbar");
+    if (!topbar) return 68;
+
+    const topbarStyles = window.getComputedStyle(topbar);
+    const stickyTop = Number.parseFloat(topbarStyles.top || "0");
+    const safeStickyTop = Number.isFinite(stickyTop) ? stickyTop : 0;
+    return Math.ceil(topbar.getBoundingClientRect().height + safeStickyTop + 18);
+  })();
+  const offset = options.offset ?? computedTopbarOffset;
 
   const startY = window.scrollY;
   const targetY = Math.max(0, element.getBoundingClientRect().top + startY - offset);

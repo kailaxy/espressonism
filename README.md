@@ -99,6 +99,10 @@ Required:
 
 Optional:
 - `NEXT_PUBLIC_ADMIN_PIN`
+- `NEXT_PUBLIC_PROMO_IMAGE_BUCKET_PREFIX` (folder/prefix for promo images)
+
+Required for Promotional image picker in `/admin`:
+- `NEXT_PUBLIC_PROMO_IMAGE_BUCKET_NAME` (must be a public Supabase Storage bucket)
 
 Note: Keep `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID` without the `NEXT_PUBLIC_` prefix.
 
@@ -123,6 +127,11 @@ Copy-Item .env.example .env.local
 ```
 
 3. Fill `.env.local` with your Supabase values.
+
+For Promotional image picker in Admin:
+- Set `NEXT_PUBLIC_PROMO_IMAGE_BUCKET_NAME` to a public bucket name.
+- (Optional) Set `NEXT_PUBLIC_PROMO_IMAGE_BUCKET_PREFIX` to limit file picking to a folder path, like `promo/slides`.
+- Make sure the bucket (and prefix contents) contains image files (`.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.avif`, `.svg`).
 
 4. Create a Supabase project and run `schema.sql` in the SQL Editor.
 

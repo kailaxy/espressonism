@@ -1,5 +1,8 @@
+"use client";
+
 import Image from "next/image";
 import { useEffect, useMemo, useRef } from "react";
+import { Skeleton } from "./UI";
 
 export interface MenuItem {
   id: string;
@@ -336,21 +339,9 @@ interface CartModalProps {
   serviceFee: number;
   grandTotal: number;
   isCheckingOut: boolean;
-  checkoutError: string | null;
-  orderType: OrderType;
-  paymentMethod: PaymentMethod;
-  deliveryAddress: string;
-  pickupWindow: string;
-  customerName: string;
-  customerPhone: string;
-  specialInstructions: string;
-  onOrderTypeChange: (value: OrderType) => void;
-  onPaymentMethodChange: (value: PaymentMethod) => void;
-  onDeliveryAddressChange: (value: string) => void;
-  onPickupWindowChange: (value: string) => void;
-  onCustomerNameChange: (value: string) => void;
-  onCustomerPhoneChange: (value: string) => void;
-  onSpecialInstructionsChange: (value: string) => void;
+  pickupTime: string;
+  pickupTimes: string[];
+  onPickupTimeChange: (value: string) => void;
   onRemoveLine: (lineId: string) => void;
   onClearOrder: () => void;
   onClose: () => void;
@@ -364,21 +355,9 @@ export function CartModal({
   serviceFee,
   grandTotal,
   isCheckingOut,
-  checkoutError,
-  orderType,
-  paymentMethod,
-  deliveryAddress,
-  pickupWindow,
-  customerName,
-  customerPhone,
-  specialInstructions,
-  onOrderTypeChange,
-  onPaymentMethodChange,
-  onDeliveryAddressChange,
-  onPickupWindowChange,
-  onCustomerNameChange,
-  onCustomerPhoneChange,
-  onSpecialInstructionsChange,
+  pickupTime,
+  pickupTimes,
+  onPickupTimeChange,
   onRemoveLine,
   onClearOrder,
   onClose,
@@ -388,14 +367,7 @@ export function CartModal({
 
   if (!isOpen) return null;
 
-  const deliveryAddressRequired = orderType === "delivery";
-  const missingDeliveryAddress = deliveryAddressRequired && deliveryAddress.trim().length === 0;
-  const checkoutDisabled =
-    lines.length === 0 ||
-    customerName.trim().length === 0 ||
-    customerPhone.trim().length === 0 ||
-    missingDeliveryAddress ||
-    isCheckingOut;
+  const checkoutDisabled = lines.length === 0 || isCheckingOut;
 
   return (
     <div className="order-modal-backdrop" role="presentation" onClick={onClose}>
@@ -461,121 +433,22 @@ export function CartModal({
           </button>
         ) : null}
 
-        <label className="order-pickup-label" htmlFor="pickupWindow">
-          Pickup Window
-        </label>
-        <select
-          id="pickupWindow"
-          className="order-pickup-select"
-          value={pickupWindow}
-          onChange={(event) => onPickupWindowChange(event.target.value)}
-        >
-          <option value="in-10">In 10 minutes</option>
-          <option value="in-20">In 20 minutes</option>
-          <option value="in-30">In 30 minutes</option>
-          <option value="custom">On my arrival</option>
-        </select>
-
-        <div className="checkout-form-grid">
-          <fieldset className="checkout-choice-group">
-            <legend>Order Type</legend>
-            <div className="checkout-choice-list" role="radiogroup" aria-label="Order type">
-              <label className={`checkout-choice ${orderType === "pickup" ? "checkout-choice-active" : ""}`}>
-                <input
-                  type="radio"
-                  name="orderType"
-                  value="pickup"
-                  checked={orderType === "pickup"}
-                  onChange={() => onOrderTypeChange("pickup")}
-                />
-                Pick-up
-              </label>
-              <label className={`checkout-choice ${orderType === "delivery" ? "checkout-choice-active" : ""}`}>
-                <input
-                  type="radio"
-                  name="orderType"
-                  value="delivery"
-                  checked={orderType === "delivery"}
-                  onChange={() => onOrderTypeChange("delivery")}
-                />
-                Delivery
-              </label>
-            </div>
-          </fieldset>
-
-          {deliveryAddressRequired ? (
-            <label className="checkout-field" htmlFor="deliveryAddress">
-              Delivery Address *
-              <textarea
-                id="deliveryAddress"
-                value={deliveryAddress}
-                onChange={(event) => onDeliveryAddressChange(event.target.value)}
-                placeholder="House number, street, barangay, city"
-                rows={2}
-                required
-              />
-            </label>
-          ) : null}
-
-          <label className="checkout-field" htmlFor="customerName">
-            Customer Name *
-            <input
-              id="customerName"
-              type="text"
-              value={customerName}
-              onChange={(event) => onCustomerNameChange(event.target.value)}
-              placeholder="Enter your name"
-              required
-            />
+        <div className="order-pickup-field">
+          <label className="order-pickup-label" htmlFor="pickupTime">
+            Pickup Time
           </label>
-          <label className="checkout-field" htmlFor="customerPhone">
-            Contact Number *
-            <input
-              id="customerPhone"
-              type="text"
-              inputMode="tel"
-              value={customerPhone}
-              onChange={(event) => onCustomerPhoneChange(event.target.value)}
-              placeholder="09XXXXXXXXX"
-              required
-            />
-          </label>
-          <label className="checkout-field" htmlFor="specialInstructions">
-            Special Instructions
-            <textarea
-              id="specialInstructions"
-              value={specialInstructions}
-              onChange={(event) => onSpecialInstructionsChange(event.target.value)}
-              placeholder="Less sugar, no straw, etc."
-              rows={2}
-            />
-          </label>
-
-          <fieldset className="checkout-choice-group">
-            <legend>Payment Method</legend>
-            <div className="checkout-choice-list" role="radiogroup" aria-label="Payment method">
-              <label className={`checkout-choice ${paymentMethod === "cash" ? "checkout-choice-active" : ""}`}>
-                <input
-                  type="radio"
-                  name="paymentMethod"
-                  value="cash"
-                  checked={paymentMethod === "cash"}
-                  onChange={() => onPaymentMethodChange("cash")}
-                />
-                Cash
-              </label>
-              <label className={`checkout-choice ${paymentMethod === "gcash" ? "checkout-choice-active" : ""}`}>
-                <input
-                  type="radio"
-                  name="paymentMethod"
-                  value="gcash"
-                  checked={paymentMethod === "gcash"}
-                  onChange={() => onPaymentMethodChange("gcash")}
-                />
-                GCash
-              </label>
-            </div>
-          </fieldset>
+          <select
+            id="pickupTime"
+            className="order-pickup-select"
+            value={pickupTime}
+            onChange={(event) => onPickupTimeChange(event.target.value)}
+          >
+            {pickupTimes.map((timeOption) => (
+              <option key={timeOption} value={timeOption}>
+                {timeOption}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="order-totals">
@@ -593,14 +466,14 @@ export function CartModal({
           </p>
         </div>
 
-        {checkoutError ? (
-          <p className="order-checkout-error" role="alert">
-            {checkoutError}
-          </p>
-        ) : null}
-
         <button type="button" className="order-checkout-btn-v2" disabled={checkoutDisabled} onClick={onCheckout}>
-          {isCheckingOut ? "Proceeding..." : "Proceed to Payment"}
+          {isCheckingOut ? (
+            <span aria-label="Proceeding to payment">
+              <Skeleton type="text" width="9rem" />
+            </span>
+          ) : (
+            "Proceed to Payment"
+          )}
         </button>
       </aside>
     </div>
@@ -722,6 +595,8 @@ interface ReceiptViewProps {
   createdAt: string;
   lines: CartLine[];
   totalPrice: number;
+  orderType: OrderType;
+  pickupTime: string | null;
   paymentMethod: PaymentMethod;
   gcashReference: string;
   onReorder: () => void;
@@ -733,6 +608,8 @@ export function ReceiptView({
   createdAt,
   lines,
   totalPrice,
+  orderType,
+  pickupTime,
   paymentMethod,
   gcashReference,
   onReorder,
@@ -757,6 +634,9 @@ export function ReceiptView({
   const paymentLine = paymentMethod === "gcash"
     ? `PAID VIA GCASH - Ref: ${gcashReference || "N/A"}`
     : "TO PAY AT COUNTER";
+  const pickupLine = orderType === "pickup"
+    ? `Pickup Time: ${pickupTime?.trim() || "As soon as possible"}`
+    : null;
 
   const handleSaveReceiptAsImage = async () => {
     if (!receiptPaperRef.current) return;
@@ -820,6 +700,7 @@ export function ReceiptView({
         </p>
 
         <p className="receipt-payment-line">{paymentLine}</p>
+        {pickupLine ? <p className="receipt-payment-line">{pickupLine}</p> : null}
 
         <div className="receipt-print-actions">
           <button type="button" className="order-secondary-btn" onClick={handleSaveReceiptAsImage}>

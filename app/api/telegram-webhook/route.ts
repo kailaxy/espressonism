@@ -9,6 +9,7 @@ type OrderDetails = {
   id: string;
   customer_name: string;
   order_type: string;
+  pickup_time?: string | null;
   total_price: number | string;
   items: unknown;
   special_instructions?: string | null;
@@ -20,7 +21,7 @@ type TelegramApiResult = {
 };
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
-const ORDER_DETAILS_COLUMNS = "id, customer_name, order_type, total_price, items, special_instructions";
+const ORDER_DETAILS_COLUMNS = "id, customer_name, order_type, pickup_time, total_price, items, special_instructions";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -163,8 +164,13 @@ function getStatusHeader(status: FriendlyOrderStatus): string {
 
 function buildEditedMessage(order: OrderDetails, status: FriendlyOrderStatus): string {
   const displayName = order.customer_name.trim().length > 0 ? order.customer_name : "-";
+  const normalizedOrderType = order.order_type.trim().toLowerCase();
   const displayType =
     order.order_type.trim().length > 0 ? normalizeOrderTypeLabel(order.order_type) : "-";
+  const displayPickupTime =
+    normalizedOrderType === "pickup" || normalizedOrderType === "pick-up"
+      ? (typeof order.pickup_time === "string" && order.pickup_time.trim().length > 0 ? order.pickup_time.trim() : "As soon as possible")
+      : null;
   const displayTotal = formatTotalForDisplay(order.total_price);
   const items = formatItemsForDisplay(order.items);
   const specialInstructions =
@@ -175,6 +181,7 @@ function buildEditedMessage(order: OrderDetails, status: FriendlyOrderStatus): s
     "",
     `<b>Name:</b> ${escapeHtml(displayName)}`,
     `<b>Type:</b> ${escapeHtml(displayType)}`,
+    ...(displayPickupTime ? [`<b>Pickup Time:</b> ${escapeHtml(displayPickupTime)}`] : []),
     `<b>Total:</b> ${escapeHtml(displayTotal)}`,
     "<b>Items:</b>",
     escapeHtml(items),

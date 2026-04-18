@@ -79,10 +79,9 @@ interface BottomCTAProps {
   title: string;
   description: string;
   buttonLabel: string;
-  mapContent: React.ReactNode;
 }
 
-export function VisitSection({ title, description, buttonLabel, mapContent }: BottomCTAProps) {
+export function VisitSection({ title, description, buttonLabel }: BottomCTAProps) {
   const handleGetDirections = () => {
     window.open(
       "https://www.google.com/maps/place/espressonism/@14.5809759,121.0287333,17z/data=!3m1!4b1!4m8!3m7!1s0x3397c99fa0974bc5:0xa8ae7b06dab1eef6!8m2!3d14.5809759!4d121.0313082!9m1!1b1!16s%2Fg%2F11v11xz_c7?entry=ttu&g_ep=EgoyMDI2MDMyOS4wIKXMDSoASAFQAw%3D%3D",
@@ -101,10 +100,6 @@ export function VisitSection({ title, description, buttonLabel, mapContent }: Bo
         <button className="cta" type="button" onClick={handleGetDirections}>
           {buttonLabel}
         </button>
-      </div>
-
-      <div className="map-wrap" aria-label="Map to Espressonism">
-        {mapContent}
       </div>
     </>
   );

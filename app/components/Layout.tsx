@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { MouseEvent, ReactNode, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { smoothScrollToElement } from "../lib/smoothScroll";
@@ -73,7 +74,7 @@ export function Navbar({ cartCount, onCartClick, hrefPrefix = "" }: NavbarProps)
         <a href={`${hrefPrefix}#method`} onClick={(event) => handleMenuLinkClick(event, "method")}>Method</a>
         <a href={`${hrefPrefix}#gallery`} onClick={(event) => handleMenuLinkClick(event, "gallery")}>Gallery</a>
         <a href={`${hrefPrefix}#testimonials`} onClick={(event) => handleMenuLinkClick(event, "testimonials")}>Stories</a>
-        <a href={`${hrefPrefix}#loyalty`} onClick={(event) => handleMenuLinkClick(event, "loyalty")}>Loyalty</a>
+        <Link href="/loyalty" onClick={() => setIsMenuOpen(false)}>Loyalty</Link>
         <a href={`${hrefPrefix}#visit`} onClick={(event) => handleMenuLinkClick(event, "visit")}>Visit</a>
       </nav>
 

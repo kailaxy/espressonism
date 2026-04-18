@@ -80,14 +80,66 @@ create table if not exists public.today_at_bar (
   extraction_time text not null default '',
   brew_temp text not null default '',
   guest_score text not null default '',
+  carousel_enabled boolean not null default false,
+  carousel_autoplay boolean not null default true,
+  carousel_interval_ms integer not null default 5500,
+  carousel_slides jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
+
+alter table public.today_at_bar
+  add column if not exists carousel_enabled boolean not null default false,
+  add column if not exists carousel_autoplay boolean not null default true,
+  add column if not exists carousel_interval_ms integer not null default 5500,
+  add column if not exists carousel_slides jsonb not null default '[]'::jsonb;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'today_at_bar_carousel_interval_ms_check'
+      and conrelid = 'public.today_at_bar'::regclass
+  ) then
+    alter table public.today_at_bar
+      add constraint today_at_bar_carousel_interval_ms_check
+      check (carousel_interval_ms between 2200 and 15000);
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'today_at_bar_carousel_slides_array_check'
+      and conrelid = 'public.today_at_bar'::regclass
+  ) then
+    alter table public.today_at_bar
+      add constraint today_at_bar_carousel_slides_array_check
+      check (jsonb_typeof(carousel_slides) = 'array');
+  end if;
+end $$;
 
 create table if not exists public.today_highlights (
   id uuid primary key default gen_random_uuid(),
   menu_item_id uuid not null references public.menu_items(id) on delete cascade,
   created_at timestamptz not null default now(),
   unique (menu_item_id)
+);
+
+create table if not exists public.ingredients (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique check (length(trim(name)) > 0),
+  unit text not null check (length(trim(unit)) > 0),
+  cost_per_unit numeric(10, 2) not null check (cost_per_unit >= 0),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.recipe_ingredients (
+  id uuid primary key default gen_random_uuid(),
+  menu_item_id uuid not null references public.menu_items(id) on delete cascade,
+  ingredient_id uuid not null references public.ingredients(id) on delete cascade,
+  quantity numeric(10, 3) not null check (quantity > 0),
+  created_at timestamptz not null default now(),
+  unique (menu_item_id, ingredient_id)
 );
 
 insert into public.daily_feature (id, title, description, dose, extraction_time, brew_temp, guest_score)
@@ -114,6 +166,7 @@ on conflict (menu_item_id) do nothing;
 
 create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete set null,
   customer_name text not null,
   customer_phone text,
   items jsonb not null default '[]'::jsonb check (jsonb_typeof(items) = 'array'),
@@ -124,17 +177,21 @@ create table if not exists public.orders (
   gcash_reference text,
   delivery_address text,
   special_instructions text,
+  pickup_time text,
   created_at timestamptz not null default now()
 );
 
 alter table public.orders
+  add column if not exists user_id uuid,
   add column if not exists customer_phone text,
   add column if not exists order_type text not null default 'pickup',
   add column if not exists payment_method text not null default 'cash',
   add column if not exists gcash_reference text,
-  add column if not exists delivery_address text;
+  add column if not exists delivery_address text,
+  add column if not exists pickup_time text;
 
 alter table public.orders
+  alter column user_id drop not null,
   alter column created_at set default now();
 
 create table if not exists public.orders_archive (
@@ -155,14 +212,94 @@ begin
 end $$;
 
 alter table public.orders_archive
-  alter column id drop default,
-  alter column created_at set default now();
+  add column if not exists user_id uuid;
+
+alter table public.orders_archive
+  add column if not exists pickup_time text;
 
 alter table public.orders_archive
   add column if not exists archived_at timestamptz not null default now();
 
 do $$
 begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'orders_archive'
+      and column_name = 'user_id'
+  ) then
+    alter table public.orders_archive
+      alter column user_id drop not null;
+  end if;
+
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'orders_archive'
+      and column_name = 'id'
+  ) then
+    alter table public.orders_archive
+      alter column id drop default;
+  end if;
+
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'orders_archive'
+      and column_name = 'created_at'
+  ) then
+    alter table public.orders_archive
+      alter column created_at set default now();
+  end if;
+end $$;
+
+create table if not exists public.loyalty_profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  full_name text,
+  phone_number text,
+  current_stamps integer not null default 0,
+  total_stamps_earned integer not null default 0
+);
+
+alter table public.loyalty_profiles
+  add column if not exists full_name text,
+  add column if not exists phone_number text,
+  add column if not exists current_stamps integer not null default 0,
+  add column if not exists total_stamps_earned integer not null default 0;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'orders_user_id_fkey'
+      and conrelid = 'public.orders'::regclass
+  ) then
+    alter table public.orders
+      add constraint orders_user_id_fkey
+      foreign key (user_id) references auth.users(id) on delete set null;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'orders_archive_user_id_fkey'
+      and conrelid = 'public.orders_archive'::regclass
+  ) and exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'orders_archive'
+      and column_name = 'user_id'
+  ) then
+    alter table public.orders_archive
+      add constraint orders_archive_user_id_fkey
+      foreign key (user_id) references auth.users(id) on delete set null;
+  end if;
+
   if not exists (
     select 1
     from pg_constraint
@@ -293,6 +430,7 @@ as $$
 begin
   insert into public.orders_archive (
     id,
+    user_id,
     customer_name,
     customer_phone,
     items,
@@ -303,10 +441,12 @@ begin
     gcash_reference,
     delivery_address,
     special_instructions,
+    pickup_time,
     created_at
   )
   values (
     new.id,
+    new.user_id,
     new.customer_name,
     new.customer_phone,
     new.items,
@@ -317,10 +457,12 @@ begin
     new.gcash_reference,
     new.delivery_address,
     new.special_instructions,
+    new.pickup_time,
     new.created_at
   )
   on conflict (id) do update
   set
+    user_id = excluded.user_id,
     customer_name = excluded.customer_name,
     customer_phone = excluded.customer_phone,
     items = excluded.items,
@@ -331,11 +473,48 @@ begin
     gcash_reference = excluded.gcash_reference,
     delivery_address = excluded.delivery_address,
     special_instructions = excluded.special_instructions,
+    pickup_time = excluded.pickup_time,
     created_at = excluded.created_at,
     archived_at = now();
 
   delete from public.orders where id = new.id;
   return null;
+end;
+$$;
+
+create or replace function public.sync_loyalty_profile_from_order()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.user_id is null then
+    return new;
+  end if;
+
+  insert into public.loyalty_profiles (
+    user_id,
+    full_name,
+    phone_number,
+    current_stamps,
+    total_stamps_earned
+  )
+  values (
+    new.user_id,
+    nullif(trim(new.customer_name), ''),
+    nullif(trim(coalesce(new.customer_phone, '')), ''),
+    1,
+    1
+  )
+  on conflict (user_id) do update
+  set
+    full_name = excluded.full_name,
+    phone_number = excluded.phone_number,
+    current_stamps = public.loyalty_profiles.current_stamps + 1,
+    total_stamps_earned = public.loyalty_profiles.total_stamps_earned + 1;
+
+  return new;
 end;
 $$;
 
@@ -346,8 +525,31 @@ for each row
 when (new.order_type = 'pickup' and new.status in ('completed', 'cancelled'))
 execute function public.archive_pickup_orders();
 
+drop trigger if exists trg_sync_loyalty_on_completed_delivery_order on public.orders;
+create trigger trg_sync_loyalty_on_completed_delivery_order
+after update of status, order_type, user_id on public.orders
+for each row
+when (
+  old.status is distinct from 'completed'
+  and new.status = 'completed'
+  and new.order_type = 'delivery'
+  and new.user_id is not null
+)
+execute function public.sync_loyalty_profile_from_order();
+
+drop trigger if exists trg_sync_loyalty_on_archived_order_insert on public.orders_archive;
+create trigger trg_sync_loyalty_on_archived_order_insert
+after insert on public.orders_archive
+for each row
+when (
+  new.status = 'completed'
+  and new.user_id is not null
+)
+execute function public.sync_loyalty_profile_from_order();
+
 insert into public.orders_archive (
   id,
+  user_id,
   customer_name,
   customer_phone,
   items,
@@ -358,10 +560,12 @@ insert into public.orders_archive (
   gcash_reference,
   delivery_address,
   special_instructions,
+  pickup_time,
   created_at
 )
 select
   id,
+  user_id,
   customer_name,
   customer_phone,
   items,
@@ -372,12 +576,14 @@ select
   gcash_reference,
   delivery_address,
   special_instructions,
+  pickup_time,
   created_at
 from public.orders
 where order_type = 'pickup'
   and status in ('completed', 'cancelled')
 on conflict (id) do update
 set
+  user_id = excluded.user_id,
   customer_name = excluded.customer_name,
   customer_phone = excluded.customer_phone,
   items = excluded.items,
@@ -388,6 +594,7 @@ set
   gcash_reference = excluded.gcash_reference,
   delivery_address = excluded.delivery_address,
   special_instructions = excluded.special_instructions,
+  pickup_time = excluded.pickup_time,
   created_at = excluded.created_at,
   archived_at = now();
 
@@ -399,8 +606,11 @@ alter table public.menu_items enable row level security;
 alter table public.daily_feature enable row level security;
 alter table public.today_at_bar enable row level security;
 alter table public.today_highlights enable row level security;
+alter table public.ingredients enable row level security;
+alter table public.recipe_ingredients enable row level security;
 alter table public.orders enable row level security;
 alter table public.orders_archive enable row level security;
+alter table public.loyalty_profiles enable row level security;
 
 drop policy if exists "Menu is readable by everyone" on public.menu_items;
 create policy "Menu is readable by everyone"
@@ -448,6 +658,64 @@ with check (true);
 drop policy if exists "Dashboard can delete today highlights" on public.today_highlights;
 create policy "Dashboard can delete today highlights"
 on public.today_highlights
+for delete
+to anon, authenticated
+using (true);
+
+drop policy if exists "Ingredients are readable by everyone" on public.ingredients;
+create policy "Ingredients are readable by everyone"
+on public.ingredients
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Dashboard can insert ingredients" on public.ingredients;
+create policy "Dashboard can insert ingredients"
+on public.ingredients
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "Dashboard can update ingredients" on public.ingredients;
+create policy "Dashboard can update ingredients"
+on public.ingredients
+for update
+to anon, authenticated
+using (true)
+with check (true);
+
+drop policy if exists "Dashboard can delete ingredients" on public.ingredients;
+create policy "Dashboard can delete ingredients"
+on public.ingredients
+for delete
+to anon, authenticated
+using (true);
+
+drop policy if exists "Recipe ingredients are readable by everyone" on public.recipe_ingredients;
+create policy "Recipe ingredients are readable by everyone"
+on public.recipe_ingredients
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Dashboard can insert recipe ingredients" on public.recipe_ingredients;
+create policy "Dashboard can insert recipe ingredients"
+on public.recipe_ingredients
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "Dashboard can update recipe ingredients" on public.recipe_ingredients;
+create policy "Dashboard can update recipe ingredients"
+on public.recipe_ingredients
+for update
+to anon, authenticated
+using (true)
+with check (true);
+
+drop policy if exists "Dashboard can delete recipe ingredients" on public.recipe_ingredients;
+create policy "Dashboard can delete recipe ingredients"
+on public.recipe_ingredients
 for delete
 to anon, authenticated
 using (true);
@@ -514,6 +782,28 @@ for select
 to anon, authenticated
 using (true);
 
+drop policy if exists "Users can read their loyalty profile" on public.loyalty_profiles;
+create policy "Users can read their loyalty profile"
+on public.loyalty_profiles
+for select
+to authenticated
+using (auth.uid() = user_id);
+
+drop policy if exists "Users can insert their loyalty profile" on public.loyalty_profiles;
+create policy "Users can insert their loyalty profile"
+on public.loyalty_profiles
+for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+drop policy if exists "Users can update their loyalty profile" on public.loyalty_profiles;
+create policy "Users can update their loyalty profile"
+on public.loyalty_profiles
+for update
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
 grant usage on schema public to anon, authenticated;
 grant select on table public.menu_items to anon, authenticated;
 grant insert, delete on table public.menu_items to anon, authenticated;
@@ -521,7 +811,10 @@ grant update(image_url) on table public.menu_items to anon, authenticated;
 grant select, update on table public.daily_feature to anon, authenticated;
 grant select, update on table public.today_at_bar to anon, authenticated;
 grant select, insert, delete on table public.today_highlights to anon, authenticated;
+grant select, insert, update, delete on table public.ingredients to anon, authenticated;
+grant select, insert, update, delete on table public.recipe_ingredients to anon, authenticated;
 grant insert on table public.orders to anon, authenticated;
 grant select on table public.orders to anon, authenticated;
 grant update(status) on table public.orders to anon, authenticated;
 grant select on table public.orders_archive to anon, authenticated;
+grant select, insert, update on table public.loyalty_profiles to authenticated;

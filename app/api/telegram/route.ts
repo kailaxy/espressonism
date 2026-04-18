@@ -159,17 +159,21 @@ function parseItems(items: unknown): string[] | null {
 function buildMessage(
   customerName: string,
   orderType: string,
+  pickupTime: string | null,
   totalPrice: string,
   itemLines: string[],
   specialInstructions: string | null
 ): string {
   const displayType = normalizeOrderTypeLabel(orderType);
+  const normalizedOrderType = orderType.trim().toLowerCase();
   const displayTotal = formatTotalForDisplay(totalPrice);
+  const displayPickupTime = pickupTime?.trim() || "As soon as possible";
 
   const lines = [
     "🚨 NEW ORDER! 🚨",
     `Name: ${customerName}`,
     `Type: ${displayType}`,
+    ...(normalizedOrderType === "pickup" || normalizedOrderType === "pick-up" ? [`Pickup Time: ${displayPickupTime}`] : []),
     `Total: ${displayTotal}`,
     "Items:",
     ...itemLines
@@ -261,6 +265,7 @@ export async function POST(request: Request) {
   const totalPrice = parseTotalPrice(payload.totalPrice);
   const itemLines = parseItems(payload.items);
   const specialInstructions = parseOptionalString(payload.specialInstructions);
+  const pickupTime = parseOptionalString(payload.pickupTime) ?? parseOptionalString(payload.pickup_time);
 
   if (!customerName || !orderType || !orderId || !totalPrice || !itemLines) {
     console.warn("[telegram-api] payload invalid", {
@@ -292,7 +297,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const text = buildMessage(customerName, orderType, totalPrice, itemLines, specialInstructions);
+  const text = buildMessage(customerName, orderType, pickupTime, totalPrice, itemLines, specialInstructions);
 
   let telegramResponse: Response;
 

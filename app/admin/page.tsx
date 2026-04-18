@@ -2,11 +2,20 @@
 
 import NextImage from "next/image";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Skeleton,
+  SkeletonFormBlock,
+  SkeletonListRow,
+  SkeletonModalBody,
+  SkeletonPageSection,
+  SkeletonTableRow
+} from "../components/UI";
+import InventoryManager from "./InventoryManager";
 // @ts-ignore - Supabase client is intentionally authored in a JavaScript module.
 import { supabase } from "../../supabaseClient";
 
 type OrderStatus = "received" | "preparing" | "brewing" | "ready" | "completed" | "cancelled";
-type AdminTab = "orders" | "menu" | "highlights" | "today-bar" | "sales";
+type AdminTab = "orders" | "menu" | "highlights" | "promotional" | "sales" | "inventory";
 type MenuCategory = "espresso" | "signature" | "bites";
 
 type DashboardOrder = {
@@ -14,6 +23,7 @@ type DashboardOrder = {
   customer_name: string | null;
   customer_phone: string | null;
   order_type: string | null;
+  pickup_time: string | null;
   delivery_address: string | null;
   special_instructions: string | null;
   payment_method: string | null;
@@ -28,6 +38,7 @@ type NormalizedOrderItem = {
   name: string;
   quantity: number;
   unitPrice: number;
+  menuItemId: string | null;
   size: string;
   milk: string;
 };
@@ -45,10 +56,19 @@ type ActionConfig = {
   nextStatus: "brewing" | "ready" | "completed";
 };
 
-type SalesTotals = {
-  today: number;
-  week: number;
-  month: number;
+type FilterMode = "daily" | "monthly";
+
+type SalesMetrics = {
+  gross: number;
+  cogs: number;
+  grossProfit: number;
+  cash: number;
+  gcash: number;
+};
+
+type SalesDateRange = {
+  startIso: string;
+  endIso: string;
 };
 
 type MenuManagerItem = {
@@ -81,6 +101,25 @@ type TodayAtBarRow = {
   extraction_time: string | null;
   brew_temp: string | null;
   guest_score: string | number | null;
+  carousel_enabled: boolean | null;
+  carousel_autoplay: boolean | null;
+  carousel_interval_ms: number | null;
+  carousel_slides: unknown;
+};
+
+type TodayAtBarCarouselSlideForm = {
+  id: string;
+  imageUrl: string;
+  title: string;
+  description: string;
+};
+
+type PromoBucketImageOption = {
+  name: string;
+  path: string;
+  publicUrl: string;
+  updatedAt: string | null;
+  sizeInBytes: number | null;
 };
 
 type TodayAtBarForm = {
@@ -90,6 +129,10 @@ type TodayAtBarForm = {
   extractionTime: string;
   brewTemp: string;
   guestScore: string;
+  carouselEnabled: boolean;
+  carouselAutoplay: boolean;
+  carouselIntervalMs: string;
+  carouselSlides: TodayAtBarCarouselSlideForm[];
 };
 
 type AdminNotice = {
@@ -97,17 +140,41 @@ type AdminNotice = {
   message: string;
 };
 
+type ConfirmationModalState = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void | Promise<void>;
+};
+
 const ORDER_SELECT_FIELDS =
-  "id, customer_name, customer_phone, order_type, delivery_address, special_instructions, payment_method, gcash_reference, items, total_price, status, created_at";
+  "id, customer_name, customer_phone, order_type, pickup_time, delivery_address, special_instructions, payment_method, gcash_reference, items, total_price, status, created_at";
 const MENU_ITEM_SELECT_FIELDS = "*";
 const TODAY_HIGHLIGHT_SELECT_FIELDS = "id, menu_item_id, created_at";
-const TODAY_AT_BAR_SELECT_FIELDS = "id, title, description, dose, extraction_time, brew_temp, guest_score";
+const TODAY_AT_BAR_SELECT_FIELDS =
+  "id, title, description, dose, extraction_time, brew_temp, guest_score, carousel_enabled, carousel_autoplay, carousel_interval_ms, carousel_slides";
 const ADMIN_AUTH_STORAGE_KEY = "espressonism-admin-auth-session-v1";
 const MAX_MENU_IMAGE_UPLOAD_BYTES = 1.5 * 1024 * 1024;
 const MENU_IMAGE_CROP_PREVIEW_SIZE = 280;
 const MENU_IMAGE_CROP_OUTPUT_SIZE = 640;
 const MENU_IMAGE_ZOOM_MIN = 1;
 const MENU_IMAGE_ZOOM_MAX = 3;
+const TODAY_AT_BAR_CAROUSEL_INTERVAL_MIN = 2200;
+const TODAY_AT_BAR_CAROUSEL_INTERVAL_MAX = 15000;
+const TODAY_AT_BAR_CAROUSEL_INTERVAL_DEFAULT = 5500;
+const PROMO_IMAGE_BUCKET_NAME = (process.env.NEXT_PUBLIC_PROMO_IMAGE_BUCKET_NAME ?? "").trim();
+const PROMO_IMAGE_BUCKET_PREFIX = (process.env.NEXT_PUBLIC_PROMO_IMAGE_BUCKET_PREFIX ?? "")
+  .trim()
+  .replace(/^\/+|\/+$/g, "");
+const SUPPORTED_PROMO_IMAGE_EXTENSIONS = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+  "gif",
+  "avif",
+  "svg"
+]);
 
 const COLUMNS: ColumnConfig[] = [
   { key: "received", title: "New Orders", subtitle: "Just placed" },
@@ -119,8 +186,9 @@ const ADMIN_TABS: Array<{ key: AdminTab; label: string }> = [
   { key: "orders", label: "Live Orders" },
   { key: "menu", label: "Menu Manager" },
   { key: "highlights", label: "Today Highlights" },
-  { key: "today-bar", label: "Today at the Bar" },
-  { key: "sales", label: "Sales Summary" }
+  { key: "promotional", label: "Promotional" },
+  { key: "sales", label: "Sales Summary" },
+  { key: "inventory", label: "Inventory" }
 ];
 
 const EMPTY_MENU_FORM: NewMenuItemForm = {
@@ -142,7 +210,11 @@ const EMPTY_TODAY_AT_BAR_FORM: TodayAtBarForm = {
   dose: "",
   extractionTime: "",
   brewTemp: "",
-  guestScore: ""
+  guestScore: "",
+  carouselEnabled: false,
+  carouselAutoplay: true,
+  carouselIntervalMs: String(TODAY_AT_BAR_CAROUSEL_INTERVAL_DEFAULT),
+  carouselSlides: []
 };
 
 const pesoFormatter = new Intl.NumberFormat("en-PH", {
@@ -193,6 +265,12 @@ function normalizeOrderItems(value: unknown): NormalizedOrderItem[] {
     const name = typeof item.name === "string" && item.name.trim() ? item.name.trim() : "Custom Drink";
     const quantity = typeof item.quantity === "number" && item.quantity > 0 ? item.quantity : 1;
     const unitPrice = typeof item.unit_price === "number" && item.unit_price >= 0 ? item.unit_price : 0;
+    const itemId =
+      typeof item.item_id === "string"
+        ? item.item_id.trim()
+        : typeof item.menu_item_id === "string"
+          ? item.menu_item_id.trim()
+          : "";
     const size = typeof item.size === "string" ? item.size : "regular";
     const milk = typeof item.milk === "string" ? item.milk : "whole";
 
@@ -200,6 +278,7 @@ function normalizeOrderItems(value: unknown): NormalizedOrderItem[] {
       name,
       quantity,
       unitPrice,
+      menuItemId: itemId || null,
       size,
       milk
     };
@@ -274,14 +353,171 @@ function sortTodayHighlights(highlights: TodayHighlightRow[]): TodayHighlightRow
   });
 }
 
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function clampCarouselInterval(value: number): number {
+  return clampNumber(
+    Math.round(value),
+    TODAY_AT_BAR_CAROUSEL_INTERVAL_MIN,
+    TODAY_AT_BAR_CAROUSEL_INTERVAL_MAX
+  );
+}
+
+function parseTodayAtBarCarouselSlides(value: unknown): TodayAtBarCarouselSlideForm[] {
+  let parsedValue: unknown = value;
+
+  if (typeof parsedValue === "string") {
+    const trimmedValue = parsedValue.trim();
+    if (!trimmedValue) return [];
+
+    try {
+      parsedValue = JSON.parse(trimmedValue);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(parsedValue)) return [];
+
+  return parsedValue
+    .map((entry, index) => {
+      const slide = typeof entry === "object" && entry ? (entry as Record<string, unknown>) : {};
+      const imageUrl = nonEmptyString(slide.image_url) ?? nonEmptyString(slide.imageUrl);
+      if (!imageUrl) return null;
+
+      const title = nonEmptyString(slide.title) ?? "";
+      const description = nonEmptyString(slide.description) ?? "";
+      const slideId = nonEmptyString(slide.id) ?? `slide-${index + 1}`;
+
+      return {
+        id: slideId,
+        imageUrl,
+        title,
+        description
+      };
+    })
+    .filter((slide): slide is TodayAtBarCarouselSlideForm => slide !== null);
+}
+
+function normalizeTodayAtBarSlidesForSave(
+  slides: TodayAtBarCarouselSlideForm[]
+): Array<{ id: string; image_url: string; title?: string; description?: string }> {
+  return slides.reduce<Array<{ id: string; image_url: string; title?: string; description?: string }>>(
+    (accumulator, slide, index) => {
+      const imageUrl = slide.imageUrl.trim();
+      if (!imageUrl) return accumulator;
+
+      const normalizedSlide: { id: string; image_url: string; title?: string; description?: string } = {
+        id: slide.id.trim() || `slide-${index + 1}`,
+        image_url: imageUrl
+      };
+
+      const title = slide.title.trim();
+      const description = slide.description.trim();
+
+      if (title) normalizedSlide.title = title;
+      if (description) normalizedSlide.description = description;
+
+      accumulator.push(normalizedSlide);
+      return accumulator;
+    },
+    []
+  );
+}
+
+function createTodayAtBarSlideDraft(seed: number): TodayAtBarCarouselSlideForm {
+  return {
+    id: `slide-${seed}`,
+    imageUrl: "",
+    title: "",
+    description: ""
+  };
+}
+
+function normalizePromoStoragePath(path: string | null | undefined): string {
+  if (!path) return "";
+
+  return path
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join("/");
+}
+
+function getStorageEntryPath(basePath: string, entryName: string): string {
+  const normalizedBasePath = normalizePromoStoragePath(basePath);
+  const normalizedEntryName = normalizePromoStoragePath(entryName);
+
+  if (!normalizedBasePath) return normalizedEntryName;
+  if (!normalizedEntryName) return normalizedBasePath;
+  return `${normalizedBasePath}/${normalizedEntryName}`;
+}
+
+function isPromoStorageFolder(entry: Record<string, unknown>): boolean {
+  const entryType = typeof entry.type === "string" ? entry.type.trim().toLowerCase() : "";
+  if (entryType === "folder") return true;
+  if (entryType === "file") return false;
+
+  if (entry.metadata && typeof entry.metadata === "object") {
+    return false;
+  }
+
+  const id = typeof entry.id === "string" ? entry.id.trim() : "";
+  return id.length === 0;
+}
+
+function isSupportedPromoImageFile(fileName: string): boolean {
+  const normalized = fileName.trim().toLowerCase();
+  const lastDot = normalized.lastIndexOf(".");
+  if (lastDot <= 0 || lastDot === normalized.length - 1) return false;
+  const extension = normalized.slice(lastDot + 1);
+  return SUPPORTED_PROMO_IMAGE_EXTENSIONS.has(extension);
+}
+
+function parseSortTime(value: string | null): number {
+  if (!value) return 0;
+  const parsedTime = Date.parse(value);
+  return Number.isFinite(parsedTime) ? parsedTime : 0;
+}
+
+function sortPromoBucketImages(options: PromoBucketImageOption[]): PromoBucketImageOption[] {
+  return [...options].sort((firstOption, secondOption) => {
+    const byDate = parseSortTime(secondOption.updatedAt) - parseSortTime(firstOption.updatedAt);
+    if (byDate !== 0) return byDate;
+    return firstOption.path.localeCompare(secondOption.path);
+  });
+}
+
+function formatFileSize(sizeInBytes: number | null): string {
+  if (typeof sizeInBytes !== "number" || sizeInBytes <= 0) return "Unknown size";
+  if (sizeInBytes < 1024) return `${sizeInBytes} B`;
+
+  const sizeInKb = sizeInBytes / 1024;
+  if (sizeInKb < 1024) return `${sizeInKb.toFixed(1)} KB`;
+
+  const sizeInMb = sizeInKb / 1024;
+  return `${sizeInMb.toFixed(1)} MB`;
+}
+
 function mapTodayAtBarRowToForm(row: TodayAtBarRow | null | undefined): TodayAtBarForm {
+  const parsedInterval = typeof row?.carousel_interval_ms === "number" ? row.carousel_interval_ms : NaN;
+  const carouselIntervalMs = Number.isFinite(parsedInterval)
+    ? String(clampCarouselInterval(parsedInterval))
+    : String(TODAY_AT_BAR_CAROUSEL_INTERVAL_DEFAULT);
+
   return {
     title: row?.title?.trim() ?? "",
     description: row?.description?.trim() ?? "",
     dose: row?.dose?.trim() ?? "",
     extractionTime: row?.extraction_time?.trim() ?? "",
     brewTemp: row?.brew_temp?.trim() ?? "",
-    guestScore: row?.guest_score === null || row?.guest_score === undefined ? "" : String(row.guest_score)
+    guestScore: row?.guest_score === null || row?.guest_score === undefined ? "" : String(row.guest_score),
+    carouselEnabled: row?.carousel_enabled === true,
+    carouselAutoplay: row?.carousel_autoplay !== false,
+    carouselIntervalMs,
+    carouselSlides: parseTodayAtBarCarouselSlides(row?.carousel_slides)
   };
 }
 
@@ -336,13 +572,93 @@ function orderTypeLabel(orderType: string | null): string {
 }
 
 function paymentLabel(paymentMethod: string | null): string {
-  if (paymentMethod === "gcash") return "GCash";
+  if (isGCashPayment(paymentMethod)) return "GCash";
   return "Cash";
+}
+
+function formatPickupTimeLabel(orderType: string | null, pickupTime: string | null): string {
+  if (orderType === "delivery") {
+    return "N/A for delivery";
+  }
+
+  const normalizedPickupTime = typeof pickupTime === "string" ? pickupTime.trim() : "";
+  return normalizedPickupTime || "ASAP";
+}
+
+function normalizePaymentMethod(paymentMethod: string | null): string {
+  if (typeof paymentMethod !== "string") return "";
+  return paymentMethod.trim().toLowerCase();
+}
+
+function compactPaymentMethod(paymentMethod: string | null): string {
+  return normalizePaymentMethod(paymentMethod).replace(/[\s_-]+/g, "");
+}
+
+function isGCashPayment(paymentMethod: string | null): boolean {
+  return compactPaymentMethod(paymentMethod) === "gcash";
 }
 
 function parseOrderTotal(totalPrice: DashboardOrder["total_price"]): number {
   if (typeof totalPrice === "number" && Number.isFinite(totalPrice)) return totalPrice;
   return 0;
+}
+
+function getManilaDateParts(date: Date): { year: string; month: string; day: string } {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return { year, month, day };
+}
+
+function getTodayDateInputValue(): string {
+  const { year, month, day } = getManilaDateParts(new Date());
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentMonthInputValue(): string {
+  const { year, month } = getManilaDateParts(new Date());
+  return `${year}-${month}`;
+}
+
+function buildSalesDateRange(filterMode: FilterMode, selectedDay: string, selectedMonth: string): SalesDateRange {
+  if (filterMode === "monthly") {
+    const fallbackMonth = getCurrentMonthInputValue();
+    const monthValue = /^\d{4}-\d{2}$/.test(selectedMonth) ? selectedMonth : fallbackMonth;
+    const startDate = new Date(`${monthValue}-01T00:00:00+08:00`);
+    const endDate = new Date(startDate);
+    endDate.setUTCMonth(endDate.getUTCMonth() + 1);
+    return { startIso: startDate.toISOString(), endIso: endDate.toISOString() };
+  }
+
+  const fallbackDay = getTodayDateInputValue();
+  const dayValue = /^\d{4}-\d{2}-\d{2}$/.test(selectedDay) ? selectedDay : fallbackDay;
+  const startDate = new Date(`${dayValue}T00:00:00+08:00`);
+  const endDate = new Date(startDate);
+  endDate.setUTCDate(endDate.getUTCDate() + 1);
+  return { startIso: startDate.toISOString(), endIso: endDate.toISOString() };
+}
+
+function isOrderWithinDateRange(order: DashboardOrder, range: SalesDateRange): boolean {
+  if (!order.created_at) return false;
+  const createdAt = new Date(order.created_at);
+  if (Number.isNaN(createdAt.getTime())) return false;
+  return createdAt >= new Date(range.startIso) && createdAt < new Date(range.endIso);
+}
+
+function upsertAndFilterCompletedOrders(
+  orderList: DashboardOrder[],
+  incomingOrder: DashboardOrder,
+  range: SalesDateRange
+): DashboardOrder[] {
+  const mergedOrders = upsertCompletedOrder(orderList, incomingOrder);
+  return sortByCreatedAt(mergedOrders.filter((order) => isOrderWithinDateRange(order, range)));
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -370,9 +686,31 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function isHttpSourceUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function isCanvasSecurityError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "SecurityError") {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalizedMessage = message.toLowerCase();
+  return normalizedMessage.includes("security") || normalizedMessage.includes("tainted");
+}
+
+function getMenuImageCropFallbackMessage(): string {
+  return "This image host blocks browser crop export. Upload the image file from your device, then crop and save again.";
+}
+
 function loadImageElement(sourceUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
+
+    if (isHttpSourceUrl(sourceUrl)) {
+      image.crossOrigin = "anonymous";
+    }
 
     image.onload = () => {
       resolve(image);
@@ -447,18 +785,29 @@ export default function AdminDashboardPage() {
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>("orders");
+  const [isTabMenuOpen, setIsTabMenuOpen] = useState(false);
+  const [activeMobileLaneIndex, setActiveMobileLaneIndex] = useState(0);
+  const [collapsedOrderIds, setCollapsedOrderIds] = useState<Record<string, boolean>>({});
 
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
   const [completedOrders, setCompletedOrders] = useState<DashboardOrder[]>([]);
+  const [filterMode, setFilterMode] = useState<FilterMode>("daily");
+  const [selectedDay, setSelectedDay] = useState(getTodayDateInputValue);
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthInputValue);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSalesLoading, setIsSalesLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [salesFetchError, setSalesFetchError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+  const [menuItemRecipeCosts, setMenuItemRecipeCosts] = useState<Record<string, number>>({});
+  const [salesCostError, setSalesCostError] = useState<string | null>(null);
 
   const [menuItems, setMenuItems] = useState<MenuManagerItem[]>([]);
   const [isMenuLoading, setIsMenuLoading] = useState(false);
   const [menuError, setMenuError] = useState<string | null>(null);
   const [isAddMenuFormOpen, setIsAddMenuFormOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<MenuManagerItem | null>(null);
   const [menuForm, setMenuForm] = useState<NewMenuItemForm>(EMPTY_MENU_FORM);
   const [isSavingMenuItem, setIsSavingMenuItem] = useState(false);
   const [updatingMenuImageId, setUpdatingMenuImageId] = useState<string | null>(null);
@@ -482,11 +831,18 @@ export default function AdminDashboardPage() {
   const [deletingHighlightId, setDeletingHighlightId] = useState<string | null>(null);
 
   const [todayAtBarForm, setTodayAtBarForm] = useState<TodayAtBarForm>(EMPTY_TODAY_AT_BAR_FORM);
+  const [collapsedPromotionalSlideIds, setCollapsedPromotionalSlideIds] = useState<Record<string, boolean>>({});
   const [isTodayAtBarLoading, setIsTodayAtBarLoading] = useState(false);
   const [todayAtBarError, setTodayAtBarError] = useState<string | null>(null);
   const [isSavingTodayAtBar, setIsSavingTodayAtBar] = useState(false);
+  const [activePromoSlideId, setActivePromoSlideId] = useState<string | null>(null);
+  const [isPromoImagePickerOpen, setIsPromoImagePickerOpen] = useState(false);
+  const [promoBucketImages, setPromoBucketImages] = useState<PromoBucketImageOption[]>([]);
+  const [isPromoBucketImagesLoading, setIsPromoBucketImagesLoading] = useState(false);
+  const [promoBucketImagesError, setPromoBucketImagesError] = useState<string | null>(null);
 
   const [adminNotice, setAdminNotice] = useState<AdminNotice | null>(null);
+  const [confirmationModal, setConfirmationModal] = useState<ConfirmationModalState | null>(null);
 
   const adminPin = useMemo(() => (process.env.NEXT_PUBLIC_ADMIN_PIN ?? "barista123").trim(), []);
 
@@ -523,45 +879,237 @@ export default function AdminDashboardPage() {
     };
   }, [adminNotice]);
 
-  const salesTotals = useMemo<SalesTotals>(() => {
-    const now = new Date();
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
+  useEffect(() => {
+    if (!confirmationModal) return;
 
-    const startOfWeek = new Date(now);
-    const daysSinceMonday = (startOfWeek.getDay() + 6) % 7;
-    startOfWeek.setDate(startOfWeek.getDate() - daysSinceMonday);
-    startOfWeek.setHours(0, 0, 0, 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setConfirmationModal(null);
+    };
 
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    window.addEventListener("keydown", handleKeyDown);
 
-    return completedOrders.reduce<SalesTotals>(
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [confirmationModal]);
+
+  const closeConfirmationModal = () => {
+    setConfirmationModal(null);
+  };
+
+  const openConfirmationModal = (modalConfig: ConfirmationModalState) => {
+    setConfirmationModal(modalConfig);
+  };
+
+  const handleConfirmModalAction = () => {
+    if (!confirmationModal) return;
+
+    const confirmAction = confirmationModal.onConfirm;
+    setConfirmationModal(null);
+    void confirmAction();
+  };
+
+  const closePromoImagePicker = () => {
+    setIsPromoImagePickerOpen(false);
+    setActivePromoSlideId(null);
+  };
+
+  useEffect(() => {
+    setIsTabMenuOpen(false);
+  }, [activeTab]);
+
+  useEffect(() => {
+    setCollapsedOrderIds((previousState) => {
+      const activeOrderIds = new Set(orders.map((order) => order.id));
+      const nextState: Record<string, boolean> = {};
+
+      for (const [orderId, isCollapsed] of Object.entries(previousState)) {
+        if (activeOrderIds.has(orderId) && isCollapsed) {
+          nextState[orderId] = true;
+        }
+      }
+
+      return nextState;
+    });
+  }, [orders]);
+
+  useEffect(() => {
+    setCollapsedPromotionalSlideIds((previousState) => {
+      const activeSlideIds = new Set(todayAtBarForm.carouselSlides.map((slide) => slide.id));
+      const nextState: Record<string, boolean> = {};
+
+      for (const [slideId, isCollapsed] of Object.entries(previousState)) {
+        if (activeSlideIds.has(slideId) && isCollapsed) {
+          nextState[slideId] = true;
+        }
+      }
+
+      return nextState;
+    });
+  }, [todayAtBarForm.carouselSlides]);
+
+  useEffect(() => {
+    if (!isPromoImagePickerOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setIsPromoImagePickerOpen(false);
+      setActivePromoSlideId(null);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isPromoImagePickerOpen]);
+
+  useEffect(() => {
+    if (!activePromoSlideId) return;
+
+    const stillExists = todayAtBarForm.carouselSlides.some((slide) => slide.id === activePromoSlideId);
+    if (stillExists) return;
+
+    setIsPromoImagePickerOpen(false);
+    setActivePromoSlideId(null);
+  }, [todayAtBarForm.carouselSlides, activePromoSlideId]);
+
+  const salesDateRange = useMemo(() => {
+    return buildSalesDateRange(filterMode, selectedDay, selectedMonth);
+  }, [filterMode, selectedDay, selectedMonth]);
+
+  const filteredCompletedOrders = useMemo(() => {
+    return completedOrders.filter((order) => isOrderWithinDateRange(order, salesDateRange));
+  }, [completedOrders, salesDateRange]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadRecipeCosts = async () => {
+      setSalesCostError(null);
+
+      const menuItemIds = new Set<string>();
+      for (const order of filteredCompletedOrders) {
+        const orderItems = normalizeOrderItems(order.items);
+        for (const item of orderItems) {
+          if (item.menuItemId) {
+            menuItemIds.add(item.menuItemId);
+          }
+        }
+      }
+
+      if (menuItemIds.size === 0) {
+        if (isCancelled) return;
+        setMenuItemRecipeCosts({});
+        return;
+      }
+
+      const { data: recipeRows, error: recipeError } = await supabase
+        .from("recipe_ingredients")
+        .select("menu_item_id, ingredient_id, quantity")
+        .in("menu_item_id", [...menuItemIds]);
+
+      if (recipeError) {
+        if (isCancelled) return;
+        setMenuItemRecipeCosts({});
+        setSalesCostError(recipeError.message || "Unable to load recipe costs for sales summary.");
+        return;
+      }
+
+      const normalizedRecipeRows = (recipeRows ?? []) as Array<{
+        menu_item_id: string;
+        ingredient_id: string;
+        quantity: number | string;
+      }>;
+
+      const ingredientIds = new Set<string>();
+      for (const row of normalizedRecipeRows) {
+        if (typeof row.ingredient_id === "string" && row.ingredient_id.trim()) {
+          ingredientIds.add(row.ingredient_id);
+        }
+      }
+
+      if (ingredientIds.size === 0) {
+        if (isCancelled) return;
+        setMenuItemRecipeCosts({});
+        return;
+      }
+
+      const { data: ingredientRows, error: ingredientError } = await supabase
+        .from("ingredients")
+        .select("id, cost_per_unit")
+        .in("id", [...ingredientIds]);
+
+      if (ingredientError) {
+        if (isCancelled) return;
+        setMenuItemRecipeCosts({});
+        setSalesCostError(ingredientError.message || "Unable to load ingredient costs for sales summary.");
+        return;
+      }
+
+      const ingredientCostById = new Map<string, number>();
+      for (const ingredient of (ingredientRows ?? []) as Array<{ id: string; cost_per_unit: number | string }>) {
+        ingredientCostById.set(ingredient.id, parseMoney(ingredient.cost_per_unit));
+      }
+
+      const nextRecipeCosts: Record<string, number> = {};
+      for (const row of normalizedRecipeRows) {
+        const ingredientCost = ingredientCostById.get(row.ingredient_id) ?? 0;
+        const ingredientQuantity = parseMoney(row.quantity);
+        nextRecipeCosts[row.menu_item_id] = (nextRecipeCosts[row.menu_item_id] ?? 0) + ingredientQuantity * ingredientCost;
+      }
+
+      if (isCancelled) return;
+      setMenuItemRecipeCosts(nextRecipeCosts);
+    };
+
+    void loadRecipeCosts();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [filteredCompletedOrders]);
+
+  const salesMetrics = useMemo<SalesMetrics>(() => {
+    const totals = filteredCompletedOrders.reduce<SalesMetrics>(
       (totals, order) => {
-        if (!order.created_at) return totals;
-        const createdAt = new Date(order.created_at);
-        if (Number.isNaN(createdAt.getTime())) return totals;
-
         const orderTotal = parseOrderTotal(order.total_price);
+        const isGcash = isGCashPayment(order.payment_method);
 
-        if (createdAt >= startOfToday) totals.today += orderTotal;
-        if (createdAt >= startOfWeek) totals.week += orderTotal;
-        if (createdAt >= startOfMonth) totals.month += orderTotal;
+        totals.gross += orderTotal;
+
+        const itemCogs = normalizeOrderItems(order.items).reduce((sum, item) => {
+          if (!item.menuItemId) return sum;
+          const recipeCost = menuItemRecipeCosts[item.menuItemId] ?? 0;
+          return sum + recipeCost * item.quantity;
+        }, 0);
+        totals.cogs += itemCogs;
+
+        if (isGcash) {
+          totals.gcash += orderTotal;
+        } else {
+          totals.cash += orderTotal;
+        }
 
         return totals;
       },
-      { today: 0, week: 0, month: 0 }
+      { gross: 0, cogs: 0, grossProfit: 0, cash: 0, gcash: 0 }
     );
-  }, [completedOrders]);
+
+    totals.grossProfit = totals.gross - totals.cogs;
+    return totals;
+  }, [filteredCompletedOrders, menuItemRecipeCosts]);
 
   const recentCompletedOrders = useMemo(() => {
-    return [...completedOrders]
+    return [...filteredCompletedOrders]
       .sort((firstOrder, secondOrder) => {
         const firstCreatedAt = firstOrder.created_at ?? "";
         const secondCreatedAt = secondOrder.created_at ?? "";
         return secondCreatedAt.localeCompare(firstCreatedAt);
       })
       .slice(0, 12);
-  }, [completedOrders]);
+  }, [filteredCompletedOrders]);
 
   const highlightedMenuItemIds = useMemo(() => {
     return new Set(todayHighlightRows.map((highlightRow) => highlightRow.menu_item_id));
@@ -586,63 +1134,98 @@ export default function AdminDashboardPage() {
     return menuItems.filter((menuItem) => !highlightedMenuItemIds.has(menuItem.id));
   }, [menuItems, highlightedMenuItemIds]);
 
+  const activePromoSlide = useMemo(() => {
+    if (!activePromoSlideId) return null;
+    return todayAtBarForm.carouselSlides.find((slide) => slide.id === activePromoSlideId) ?? null;
+  }, [todayAtBarForm.carouselSlides, activePromoSlideId]);
+
   useEffect(() => {
     if (!isAuthenticated) return;
 
     let isMounted = true;
 
-    const loadOrders = async () => {
+    const loadActiveOrders = async () => {
       setIsLoading(true);
       setFetchError(null);
 
-      const [activeResult, liveCompletedResult, archivedCompletedResult] = await Promise.all([
-        supabase
-          .from("orders")
-          .select(ORDER_SELECT_FIELDS)
-          .in("status", ["received", "preparing", "brewing", "ready"])
-          .order("created_at", { ascending: true }),
-        supabase
-          .from("orders")
-          .select(ORDER_SELECT_FIELDS)
-          .eq("status", "completed")
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("orders_archive")
-          .select(ORDER_SELECT_FIELDS)
-          .eq("status", "completed")
-          .order("created_at", { ascending: false })
-      ]);
+      const activeResult = await supabase
+        .from("orders")
+        .select(ORDER_SELECT_FIELDS)
+        .in("status", ["received", "preparing", "brewing", "ready"])
+        .order("created_at", { ascending: true });
 
       if (!isMounted) return;
 
-      if (activeResult.error || liveCompletedResult.error || archivedCompletedResult.error) {
-        setFetchError(
-          activeResult.error?.message ||
-            liveCompletedResult.error?.message ||
-            archivedCompletedResult.error?.message ||
-            "Unable to load dashboard data."
-        );
+      if (activeResult.error) {
+        setFetchError(activeResult.error?.message || "Unable to load dashboard data.");
         setOrders([]);
-        setCompletedOrders([]);
         setIsLoading(false);
         return;
       }
 
       const loadedOrders = ((activeResult.data ?? []) as DashboardOrder[]).filter((order) => isBoardStatus(order.status));
-      const liveCompletedOrders = ((liveCompletedResult.data ?? []) as DashboardOrder[]).filter((order) => isCompletedStatus(order.status));
-      const archivedCompletedOrders = ((archivedCompletedResult.data ?? []) as DashboardOrder[]).filter((order) => isCompletedStatus(order.status));
-      const loadedCompletedOrders = mergeCompletedOrders(liveCompletedOrders, archivedCompletedOrders);
       setOrders(sortByCreatedAt(loadedOrders));
-      setCompletedOrders(loadedCompletedOrders);
       setIsLoading(false);
     };
 
-    void loadOrders();
+    void loadActiveOrders();
 
     return () => {
       isMounted = false;
     };
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let isMounted = true;
+
+    const loadCompletedOrders = async () => {
+      setIsSalesLoading(true);
+      setSalesFetchError(null);
+
+      const [liveCompletedResult, archivedCompletedResult] = await Promise.all([
+        supabase
+          .from("orders")
+          .select(ORDER_SELECT_FIELDS)
+          .eq("status", "completed")
+          .gte("created_at", salesDateRange.startIso)
+          .lt("created_at", salesDateRange.endIso)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("orders_archive")
+          .select(ORDER_SELECT_FIELDS)
+          .eq("status", "completed")
+          .gte("created_at", salesDateRange.startIso)
+          .lt("created_at", salesDateRange.endIso)
+          .order("created_at", { ascending: false })
+      ]);
+
+      if (!isMounted) return;
+
+      if (liveCompletedResult.error || archivedCompletedResult.error) {
+        setSalesFetchError(
+          liveCompletedResult.error?.message ||
+            archivedCompletedResult.error?.message ||
+            "Unable to load completed orders for sales summary."
+        );
+        setCompletedOrders([]);
+        setIsSalesLoading(false);
+        return;
+      }
+
+      const liveCompletedOrders = ((liveCompletedResult.data ?? []) as DashboardOrder[]).filter((order) => isCompletedStatus(order.status));
+      const archivedCompletedOrders = ((archivedCompletedResult.data ?? []) as DashboardOrder[]).filter((order) => isCompletedStatus(order.status));
+      setCompletedOrders(mergeCompletedOrders(liveCompletedOrders, archivedCompletedOrders));
+      setIsSalesLoading(false);
+    };
+
+    void loadCompletedOrders();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthenticated, salesDateRange.endIso, salesDateRange.startIso]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -660,7 +1243,7 @@ export default function AdminDashboardPage() {
       } catch {
         if (isCancelled) return;
         setMenuImageElement(null);
-        setMenuError("Unable to load image for editing.");
+        setMenuError(getMenuImageCropFallbackMessage());
       }
     };
 
@@ -727,13 +1310,13 @@ export default function AdminDashboardPage() {
       if (!isMounted) return;
 
       if (error) {
-        setTodayAtBarError(error.message || "Unable to load Today at the Bar content.");
+        setTodayAtBarError(error.message || "Unable to load Promotional content.");
         setIsTodayAtBarLoading(false);
         return;
       }
 
       if (!data) {
-        setTodayAtBarError("Today at the Bar row with id = 1 was not found. Please run the latest schema.sql.");
+        setTodayAtBarError("Promotional row with id = 1 was not found. Please run the latest schema.sql.");
         setIsTodayAtBarLoading(false);
         return;
       }
@@ -763,7 +1346,7 @@ export default function AdminDashboardPage() {
         },
         (payload: { new: DashboardOrder }) => {
           setOrders((previousOrders) => upsertLiveOrder(previousOrders, payload.new));
-          setCompletedOrders((previousOrders) => upsertCompletedOrder(previousOrders, payload.new));
+          setCompletedOrders((previousOrders) => upsertAndFilterCompletedOrders(previousOrders, payload.new, salesDateRange));
         }
       )
       .on(
@@ -775,7 +1358,7 @@ export default function AdminDashboardPage() {
         },
         (payload: { new: DashboardOrder }) => {
           setOrders((previousOrders) => upsertLiveOrder(previousOrders, payload.new));
-          setCompletedOrders((previousOrders) => upsertCompletedOrder(previousOrders, payload.new));
+          setCompletedOrders((previousOrders) => upsertAndFilterCompletedOrders(previousOrders, payload.new, salesDateRange));
         }
       )
       .on(
@@ -803,7 +1386,7 @@ export default function AdminDashboardPage() {
           table: "orders_archive"
         },
         (payload: { new: DashboardOrder }) => {
-          setCompletedOrders((previousOrders) => upsertCompletedOrder(previousOrders, payload.new));
+          setCompletedOrders((previousOrders) => upsertAndFilterCompletedOrders(previousOrders, payload.new, salesDateRange));
         }
       )
       .on(
@@ -814,7 +1397,7 @@ export default function AdminDashboardPage() {
           table: "orders_archive"
         },
         (payload: { new: DashboardOrder }) => {
-          setCompletedOrders((previousOrders) => upsertCompletedOrder(previousOrders, payload.new));
+          setCompletedOrders((previousOrders) => upsertAndFilterCompletedOrders(previousOrders, payload.new, salesDateRange));
         }
       )
       .on(
@@ -835,7 +1418,7 @@ export default function AdminDashboardPage() {
       void supabase.removeChannel(ordersChannel);
       void supabase.removeChannel(archiveChannel);
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, salesDateRange]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -928,13 +1511,17 @@ export default function AdminDashboardPage() {
     setPinInput("");
     setPinError(null);
     setFetchError(null);
+    setSalesFetchError(null);
     setActionError(null);
     setOrders([]);
     setCompletedOrders([]);
+    setMenuItemRecipeCosts({});
+    setSalesCostError(null);
     setUpdatingOrderId(null);
     setMenuItems([]);
     setMenuError(null);
     setIsAddMenuFormOpen(false);
+    setEditingItem(null);
     setMenuForm(EMPTY_MENU_FORM);
     setUpdatingMenuImageId(null);
     setActiveMenuImageItem(null);
@@ -952,8 +1539,37 @@ export default function AdminDashboardPage() {
     setHighlightCandidateId("");
     setDeletingHighlightId(null);
     setTodayAtBarForm(EMPTY_TODAY_AT_BAR_FORM);
+    setCollapsedPromotionalSlideIds({});
     setTodayAtBarError(null);
+    setActivePromoSlideId(null);
+    setIsPromoImagePickerOpen(false);
+    setPromoBucketImages([]);
+    setPromoBucketImagesError(null);
+    setIsPromoBucketImagesLoading(false);
     setAdminNotice(null);
+  };
+
+  const handleRequestLogout = () => {
+    openConfirmationModal({
+      title: "Logout from dashboard?",
+      message: "You will be signed out and need to enter the dashboard PIN again.",
+      confirmLabel: "Logout",
+      onConfirm: handleLogout
+    });
+  };
+
+  const toggleOrderCard = (orderId: string) => {
+    setCollapsedOrderIds((previousState) => ({
+      ...previousState,
+      [orderId]: !previousState[orderId]
+    }));
+  };
+
+  const togglePromotionalSlideCard = (slideId: string) => {
+    setCollapsedPromotionalSlideIds((previousState) => ({
+      ...previousState,
+      [slideId]: !previousState[slideId]
+    }));
   };
 
   const updateOrderStatus = async (orderId: string, newStatus: ActionConfig["nextStatus"]) => {
@@ -984,14 +1600,42 @@ export default function AdminDashboardPage() {
     setOrders((previousOrders) => applyLocalStatusUpdate(previousOrders, orderId, newStatus));
     if (sourceOrder) {
       setCompletedOrders((previousOrders) =>
-        upsertCompletedOrder(previousOrders, {
+        upsertAndFilterCompletedOrders(previousOrders, {
           ...sourceOrder,
           status: newStatus
-        })
+        }, salesDateRange)
       );
     }
 
     setUpdatingOrderId((currentOrderId) => (currentOrderId === orderId ? null : currentOrderId));
+  };
+
+  const resetMenuFormState = () => {
+    setEditingItem(null);
+    setMenuForm(EMPTY_MENU_FORM);
+  };
+
+  const openCreateMenuForm = () => {
+    setIsAddMenuFormOpen(true);
+    resetMenuFormState();
+    setMenuError(null);
+  };
+
+  const handleStartEditMenuItem = (menuItem: MenuManagerItem) => {
+    setEditingItem(menuItem);
+    setMenuForm({
+      name: menuItem.name,
+      description: menuItem.description ?? "",
+      basePrice: String(parseMoney(menuItem.base_price)),
+      category: normalizeMenuCategory(menuItem.category)
+    });
+    setIsAddMenuFormOpen(true);
+    setMenuError(null);
+  };
+
+  const handleCancelEditMenuItem = () => {
+    resetMenuFormState();
+    setMenuError(null);
   };
 
   const handleCreateMenuItem = async (event: FormEvent<HTMLFormElement>) => {
@@ -1016,19 +1660,34 @@ export default function AdminDashboardPage() {
     setIsSavingMenuItem(true);
     setMenuError(null);
 
-    const { data, error } = await supabase
-      .from("menu_items")
-      .insert([
-        {
-          name: nextName,
-          description: nextDescription,
-          base_price: nextPrice,
-          image_url: null,
-          category: nextCategory
-        }
-      ])
-      .select(MENU_ITEM_SELECT_FIELDS)
-      .single();
+    const payload = {
+      name: nextName,
+      description: nextDescription,
+      base_price: nextPrice,
+      category: nextCategory
+    };
+
+    const isEditing = Boolean(editingItem?.id);
+
+    const query = isEditing
+      ? supabase
+          .from("menu_items")
+          .update(payload)
+          .eq("id", editingItem?.id)
+          .select(MENU_ITEM_SELECT_FIELDS)
+          .maybeSingle()
+      : supabase
+          .from("menu_items")
+          .insert([
+            {
+              ...payload,
+              image_url: null
+            }
+          ])
+          .select(MENU_ITEM_SELECT_FIELDS)
+          .single();
+
+    const { data, error } = await query;
 
     if (error || !data) {
       const hasCategoryError = error?.message?.toLowerCase().includes("category");
@@ -1037,12 +1696,18 @@ export default function AdminDashboardPage() {
       return;
     }
 
-    const createdMenuItem = normalizeMenuManagerItem(data as MenuManagerItem);
-    setMenuItems((previousItems) => sortMenuItemsByName([...previousItems, createdMenuItem]));
-    setMenuForm(EMPTY_MENU_FORM);
+    const savedMenuItem = normalizeMenuManagerItem(data as MenuManagerItem);
+    setMenuItems((previousItems) => {
+      if (!isEditing) {
+        return sortMenuItemsByName([...previousItems, savedMenuItem]);
+      }
+
+      return sortMenuItemsByName(previousItems.map((item) => (item.id === savedMenuItem.id ? savedMenuItem : item)));
+    });
+    resetMenuFormState();
     setIsAddMenuFormOpen(false);
     setIsSavingMenuItem(false);
-    setAdminNotice({ tone: "success", message: "New drink added to menu." });
+    setAdminNotice({ tone: "success", message: isEditing ? "Menu item updated." : "New drink added to menu." });
   };
 
   const openMenuImageDialog = (menuItem: MenuManagerItem) => {
@@ -1161,37 +1826,48 @@ export default function AdminDashboardPage() {
       setMenuImageDraftSource(updatedMenuItem.image_url);
       setIsMenuImageEditorOpen(false);
       resetMenuImageCrop();
-    } catch {
+    } catch (error) {
+      if (isCanvasSecurityError(error)) {
+        setMenuError(getMenuImageCropFallbackMessage());
+        return;
+      }
+
       setMenuError("Unable to apply image crop.");
     }
   };
 
-  const handleRemoveActiveMenuImage = async () => {
-    if (!activeMenuImageItem?.image_url || updatingMenuImageId) return;
-
-    const isConfirmed = window.confirm(`Remove image for ${activeMenuImageItem.name}?`);
-    if (!isConfirmed) return;
-
+  const removeMenuItemImage = async (menuItem: MenuManagerItem) => {
     const updatedMenuItem = await updateMenuItemImage(
-      activeMenuImageItem,
+      menuItem,
       null,
-      `Image removed for ${activeMenuImageItem.name}.`
+      `Image removed for ${menuItem.name}.`
     );
 
     if (!updatedMenuItem) return;
 
-    setActiveMenuImageItem(updatedMenuItem);
+    if (activeMenuImageItem?.id === updatedMenuItem.id) {
+      setActiveMenuImageItem(updatedMenuItem);
+    }
     setMenuImageDraftSource(null);
     setMenuImageElement(null);
     setIsMenuImageEditorOpen(false);
     resetMenuImageCrop();
   };
 
-  const handleDeleteMenuItem = async (menuItem: MenuManagerItem) => {
-    if (deletingMenuItemId) return;
+  const handleRemoveActiveMenuImage = () => {
+    if (!activeMenuImageItem?.image_url || updatingMenuImageId) return;
 
-    const isConfirmed = window.confirm(`Delete ${menuItem.name}? This cannot be undone.`);
-    if (!isConfirmed) return;
+    const menuItem = activeMenuImageItem;
+    openConfirmationModal({
+      title: "Remove Menu Image",
+      message: `Remove image for ${menuItem.name}? This will keep the menu item but clear its image preview.`,
+      confirmLabel: "Remove Image",
+      onConfirm: () => removeMenuItemImage(menuItem)
+    });
+  };
+
+  const deleteMenuItem = async (menuItem: MenuManagerItem) => {
+    if (deletingMenuItemId) return;
 
     setDeletingMenuItemId(menuItem.id);
     setMenuError(null);
@@ -1210,12 +1886,27 @@ export default function AdminDashboardPage() {
     setMenuItems((previousItems) => previousItems.filter((item) => item.id !== menuItem.id));
     setTodayHighlightRows((previousRows) => previousRows.filter((row) => row.menu_item_id !== menuItem.id));
 
+    if (editingItem?.id === menuItem.id) {
+      resetMenuFormState();
+    }
+
     if (activeMenuImageItem?.id === menuItem.id) {
       closeMenuImageDialog();
     }
 
     setDeletingMenuItemId(null);
     setAdminNotice({ tone: "success", message: "Menu item deleted." });
+  };
+
+  const handleDeleteMenuItem = (menuItem: MenuManagerItem) => {
+    if (deletingMenuItemId) return;
+
+    openConfirmationModal({
+      title: "Delete Menu Item",
+      message: `Delete ${menuItem.name}? This cannot be undone.`,
+      confirmLabel: "Delete",
+      onConfirm: () => deleteMenuItem(menuItem)
+    });
   };
 
   const handleAddTodayHighlight = async (event: FormEvent<HTMLFormElement>) => {
@@ -1254,11 +1945,8 @@ export default function AdminDashboardPage() {
     setAdminNotice({ tone: "success", message: "Drink added to Today Highlights." });
   };
 
-  const handleDeleteTodayHighlight = async (highlightRowId: string, menuItemName: string) => {
+  const deleteTodayHighlight = async (highlightRowId: string) => {
     if (deletingHighlightId) return;
-
-    const isConfirmed = window.confirm(`Remove ${menuItemName} from Today Highlights?`);
-    if (!isConfirmed) return;
 
     setDeletingHighlightId(highlightRowId);
     setHighlightsError(null);
@@ -1279,6 +1967,155 @@ export default function AdminDashboardPage() {
     setAdminNotice({ tone: "success", message: "Highlighted drink removed." });
   };
 
+  const handleDeleteTodayHighlight = (highlightRowId: string, menuItemName: string) => {
+    if (deletingHighlightId) return;
+
+    openConfirmationModal({
+      title: "Remove Today Highlight",
+      message: `Remove ${menuItemName} from Today Highlights?`,
+      confirmLabel: "Remove",
+      onConfirm: () => deleteTodayHighlight(highlightRowId)
+    });
+  };
+
+  const loadPromoBucketImages = async () => {
+    if (!PROMO_IMAGE_BUCKET_NAME) {
+      setPromoBucketImages([]);
+      setPromoBucketImagesError(
+        "Missing NEXT_PUBLIC_PROMO_IMAGE_BUCKET_NAME. Configure this env var to enable bucket image picker."
+      );
+      return;
+    }
+
+    setIsPromoBucketImagesLoading(true);
+    setPromoBucketImagesError(null);
+
+    const normalizedPrefix = normalizePromoStoragePath(PROMO_IMAGE_BUCKET_PREFIX);
+    const queue = [normalizedPrefix];
+    const visitedFolders = new Set<string>();
+    const seenFilePaths = new Set<string>();
+    const collectedOptions: PromoBucketImageOption[] = [];
+
+    while (queue.length > 0) {
+      const currentFolder = normalizePromoStoragePath(queue.shift() ?? "");
+      if (visitedFolders.has(currentFolder)) {
+        continue;
+      }
+
+      visitedFolders.add(currentFolder);
+      let offset = 0;
+
+      while (true) {
+        const { data, error } = await supabase.storage
+          .from(PROMO_IMAGE_BUCKET_NAME)
+          .list(currentFolder, {
+            limit: 100,
+            offset,
+            sortBy: { column: "name", order: "asc" }
+          });
+
+        if (error) {
+          setPromoBucketImages([]);
+          setPromoBucketImagesError(error.message || "Unable to load images from Supabase Storage.");
+          setIsPromoBucketImagesLoading(false);
+          return;
+        }
+
+        const entries = (data ?? []) as Record<string, unknown>[];
+
+        for (const entry of entries) {
+          const entryName = typeof entry.name === "string" ? entry.name.trim() : "";
+          if (!entryName || entryName === ".emptyFolderPlaceholder") continue;
+
+          const fullPath = getStorageEntryPath(currentFolder, entryName);
+          if (!fullPath) continue;
+
+          if (isPromoStorageFolder(entry)) {
+            queue.push(fullPath);
+            continue;
+          }
+
+          if (!isSupportedPromoImageFile(entryName)) {
+            continue;
+          }
+
+          if (seenFilePaths.has(fullPath)) {
+            continue;
+          }
+          seenFilePaths.add(fullPath);
+
+          const { data: publicUrlData } = supabase.storage
+            .from(PROMO_IMAGE_BUCKET_NAME)
+            .getPublicUrl(fullPath);
+
+          collectedOptions.push({
+            name: entryName,
+            path: fullPath,
+            publicUrl: publicUrlData.publicUrl,
+            updatedAt: typeof entry.updated_at === "string" ? entry.updated_at : null,
+            sizeInBytes:
+              typeof entry.metadata === "object" && entry.metadata !== null && typeof (entry.metadata as { size?: unknown }).size === "number"
+                ? ((entry.metadata as { size: number }).size ?? null)
+                : null
+          });
+        }
+
+        if (entries.length < 100) {
+          break;
+        }
+
+        offset += 100;
+      }
+    }
+
+    setPromoBucketImages(sortPromoBucketImages(collectedOptions));
+    setIsPromoBucketImagesLoading(false);
+  };
+
+  const openPromoImagePicker = (slideId: string) => {
+    setActivePromoSlideId(slideId);
+    setIsPromoImagePickerOpen(true);
+    void loadPromoBucketImages();
+  };
+
+  const handleSelectPromoBucketImage = (publicUrl: string) => {
+    if (!activePromoSlideId) return;
+    handleUpdateTodayAtBarSlide(activePromoSlideId, "imageUrl", publicUrl);
+    closePromoImagePicker();
+  };
+
+  const handleAddTodayAtBarSlide = () => {
+    setTodayAtBarForm((previousForm) => ({
+      ...previousForm,
+      carouselSlides: [...previousForm.carouselSlides, createTodayAtBarSlideDraft(Date.now())]
+    }));
+  };
+
+  const handleUpdateTodayAtBarSlide = (
+    slideId: string,
+    field: "imageUrl" | "title" | "description",
+    value: string
+  ) => {
+    setTodayAtBarForm((previousForm) => ({
+      ...previousForm,
+      carouselSlides: previousForm.carouselSlides.map((slide) =>
+        slide.id === slideId
+          ? {
+              ...slide,
+              [field]: value
+            }
+          : slide
+      )
+    }));
+  };
+
+  const handleRemoveTodayAtBarSlide = (slideId: string) => {
+    setTodayAtBarForm((previousForm) => ({
+      ...previousForm,
+      carouselSlides: previousForm.carouselSlides.filter((slide) => slide.id !== slideId)
+    }));
+  };
+
   const handleSaveTodayAtBar = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSavingTodayAtBar) return;
@@ -1286,13 +2123,23 @@ export default function AdminDashboardPage() {
     setTodayAtBarError(null);
     setIsSavingTodayAtBar(true);
 
+    const parsedCarouselIntervalMs = Number(todayAtBarForm.carouselIntervalMs);
+    const normalizedCarouselIntervalMs = Number.isFinite(parsedCarouselIntervalMs)
+      ? clampCarouselInterval(parsedCarouselIntervalMs)
+      : TODAY_AT_BAR_CAROUSEL_INTERVAL_DEFAULT;
+    const normalizedCarouselSlides = normalizeTodayAtBarSlidesForSave(todayAtBarForm.carouselSlides);
+
     const payload = {
       title: todayAtBarForm.title.trim(),
       description: todayAtBarForm.description.trim(),
       dose: todayAtBarForm.dose.trim(),
       extraction_time: todayAtBarForm.extractionTime.trim(),
       brew_temp: todayAtBarForm.brewTemp.trim(),
-      guest_score: todayAtBarForm.guestScore.trim()
+      guest_score: todayAtBarForm.guestScore.trim(),
+      carousel_enabled: todayAtBarForm.carouselEnabled,
+      carousel_autoplay: todayAtBarForm.carouselAutoplay,
+      carousel_interval_ms: normalizedCarouselIntervalMs,
+      carousel_slides: normalizedCarouselSlides
     };
 
     const { data, error } = await supabase
@@ -1303,13 +2150,18 @@ export default function AdminDashboardPage() {
       .maybeSingle();
 
     if (error || !data?.id) {
-      setTodayAtBarError(error?.message || "Today at the Bar row with id = 1 was not found.");
+      setTodayAtBarError(error?.message || "Promotional row with id = 1 was not found.");
       setIsSavingTodayAtBar(false);
       return;
     }
 
+    setTodayAtBarForm((previousForm) => ({
+      ...previousForm,
+      carouselIntervalMs: String(normalizedCarouselIntervalMs),
+      carouselSlides: parseTodayAtBarCarouselSlides(normalizedCarouselSlides)
+    }));
     setIsSavingTodayAtBar(false);
-    setAdminNotice({ tone: "success", message: "Landing Today at the Bar content saved." });
+    setAdminNotice({ tone: "success", message: "Landing promotional content saved." });
   };
 
   const groupedOrders = useMemo(() => {
@@ -1328,7 +2180,78 @@ export default function AdminDashboardPage() {
     );
   }, [orders]);
 
+  const liveOrderLanes = [
+    {
+      boardClass: "board-preparing",
+      countLabel: "In progress",
+      heading: "PREPARING",
+      icon: (
+        <svg
+          aria-hidden="true"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
+          <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z" />
+          <line x1="6" y1="2" x2="6" y2="4" />
+          <line x1="10" y1="2" x2="10" y2="4" />
+          <line x1="14" y1="2" x2="14" y2="4" />
+        </svg>
+      ),
+      orders: groupedOrders.preparing
+    },
+    {
+      boardClass: "board-new",
+      countLabel: "Just placed",
+      heading: "NEW ORDERS",
+      icon: (
+        <svg
+          aria-hidden="true"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+        </svg>
+      ),
+      orders: groupedOrders.received
+    },
+    {
+      boardClass: "board-ready",
+      countLabel: "Pickup / handoff",
+      heading: "READY FOR PICKUP",
+      icon: (
+        <svg
+          aria-hidden="true"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+      ),
+      orders: groupedOrders.ready
+    }
+  ];
+
   const isUpdatingActiveMenuImage = activeMenuImageItem ? updatingMenuImageId === activeMenuImageItem.id : false;
+  const isMenuImageDraftLoading = Boolean(menuImageDraftSource) && !menuImageElement;
 
   if (!isAuthenticated) {
     return (
@@ -1377,33 +2300,70 @@ export default function AdminDashboardPage() {
   return (
     <main className="barista-dashboard">
       <header className="barista-dashboard-header">
-        <div className="barista-dashboard-header-top">
-          <p className="barista-dashboard-kicker">Espressonism Ops</p>
-          <button type="button" className="barista-logout-btn" onClick={handleLogout}>
+        <div className="barista-dashboard-header-main">
+          <div className="barista-dashboard-header-top">
+            <p className="barista-dashboard-kicker">Espressonism Ops</p>
+          </div>
+          <h1>Barista Dashboard</h1>
+          <p className="barista-dashboard-copy">Track all active cups from queue to handoff.</p>
+        </div>
+        <div className="barista-dashboard-actions">
+          <nav className="barista-tab-nav barista-tab-nav-desktop" aria-label="Dashboard sections">
+            {ADMIN_TABS.map((tab) => {
+              const isActive = tab.key === activeTab;
+
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  className={`barista-tab-btn ${isActive ? "barista-tab-btn-active" : ""}`}
+                  onClick={() => setActiveTab(tab.key)}
+                  aria-pressed={isActive}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="barista-mobile-tab-menu">
+            <button
+              type="button"
+              className="barista-mobile-tab-toggle"
+              aria-expanded={isTabMenuOpen}
+              aria-controls="baristaMobileTabMenu"
+              onClick={() => setIsTabMenuOpen((previousState) => !previousState)}
+            >
+              <span aria-hidden="true">☰</span>
+              <span>Sections</span>
+            </button>
+
+            {isTabMenuOpen ? (
+              <div id="baristaMobileTabMenu" className="barista-mobile-tab-panel" aria-label="Dashboard sections">
+                {ADMIN_TABS.map((tab) => {
+                  const isActive = tab.key === activeTab;
+
+                  return (
+                    <button
+                      key={`mobile-tab-${tab.key}`}
+                      type="button"
+                      className={`barista-tab-btn barista-mobile-tab-item ${isActive ? "barista-tab-btn-active" : ""}`}
+                      onClick={() => setActiveTab(tab.key)}
+                      aria-pressed={isActive}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+
+          <button type="button" className="barista-logout-btn barista-logout-btn-danger" onClick={handleRequestLogout}>
             Logout
           </button>
         </div>
-        <h1>Barista Dashboard</h1>
-        <p className="barista-dashboard-copy">Track all active cups from queue to handoff.</p>
       </header>
-
-      <nav className="barista-tab-nav" aria-label="Dashboard sections">
-        {ADMIN_TABS.map((tab) => {
-          const isActive = tab.key === activeTab;
-
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              className={`barista-tab-btn ${isActive ? "barista-tab-btn-active" : ""}`}
-              onClick={() => setActiveTab(tab.key)}
-              aria-pressed={isActive}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </nav>
 
       {adminNotice ? (
         <p
@@ -1418,51 +2378,176 @@ export default function AdminDashboardPage() {
 
       {activeTab === "orders" ? (
         <section className="barista-orders-panel" aria-label="Live orders board">
-          {isLoading ? <p className="barista-state">Loading active orders...</p> : null}
+          {isLoading ? (
+            <section className="barista-grid" aria-label="Loading active order board" aria-busy="true">
+              <article className="barista-column board-preparing">
+                <header className="barista-column-header">
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                    <p>In progress</p>
+                    <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/></svg>
+                      PREPARING
+                    </h2>
+                  </div>
+                  <Skeleton type="text" width={28} />
+                </header>
+
+                <div className="barista-column-list">
+                  {Array.from({ length: 2 }).map((_, index) => (
+                    <SkeletonPageSection
+                      key={`orders-skeleton-preparing-${index}`}
+                      className="barista-order-card"
+                      titleWidth="48%"
+                      lineCount={5}
+                      lineWidths={["58%", "100%", "92%", "74%", "48%"]}
+                    />
+                  ))}
+                </div>
+              </article>
+
+              <article className="barista-column board-new">
+                <header className="barista-column-header">
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                    <p>Just placed</p>
+                    <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+                      NEW ORDERS
+                    </h2>
+                  </div>
+                  <Skeleton type="text" width={28} />
+                </header>
+
+                <div className="barista-column-list">
+                  {Array.from({ length: 2 }).map((_, index) => (
+                    <SkeletonPageSection
+                      key={`orders-skeleton-received-${index}`}
+                      className="barista-order-card"
+                      titleWidth="48%"
+                      lineCount={5}
+                      lineWidths={["58%", "100%", "92%", "74%", "48%"]}
+                    />
+                  ))}
+                </div>
+              </article>
+
+              <article className="barista-column board-ready">
+                <header className="barista-column-header">
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                    <p>Pickup / handoff</p>
+                    <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                      READY FOR PICKUP
+                    </h2>
+                  </div>
+                  <Skeleton type="text" width={28} />
+                </header>
+
+                <div className="barista-column-list">
+                  {Array.from({ length: 2 }).map((_, index) => (
+                    <SkeletonPageSection
+                      key={`orders-skeleton-ready-${index}`}
+                      className="barista-order-card"
+                      titleWidth="48%"
+                      lineCount={5}
+                      lineWidths={["58%", "100%", "92%", "74%", "48%"]}
+                    />
+                  ))}
+                </div>
+              </article>
+            </section>
+          ) : null}
           {fetchError ? <p className="barista-state barista-state-error">{fetchError}</p> : null}
           {actionError ? <p className="barista-state barista-state-error">{actionError}</p> : null}
 
           {!isLoading && !fetchError ? (
-            <section className="barista-board-grid" aria-label="Active order kanban board">
-              {COLUMNS.map((column) => {
-                const columnOrders = groupedOrders[column.key];
+            <>
+              <div className="barista-lane-cycler" aria-label="Mobile lane controls">
+                {liveOrderLanes.map((lane, laneIndex) => {
+                  const isActive = laneIndex === activeMobileLaneIndex;
+                  const mobileButtonTitle =
+                    lane.boardClass === "board-preparing"
+                      ? "Preparing"
+                      : lane.boardClass === "board-new"
+                        ? "New Orders"
+                        : "Ready for Pick orders";
+                  const mobileButtonLabel = `${mobileButtonTitle} (${lane.orders.length})`;
 
-                return (
-                  <article key={column.key} className="barista-column">
-                    <header className="barista-column-header">
-                      <div>
-                        <p>{column.subtitle}</p>
-                        <h2>{column.title}</h2>
-                      </div>
-                      <span className="barista-column-count" aria-label={`${columnOrders.length} orders`}>
-                        {columnOrders.length}
-                      </span>
-                    </header>
+                  return (
+                    <button
+                      key={`mobile-lane-${lane.boardClass}`}
+                      type="button"
+                      className={`barista-mobile-lane-btn ${lane.boardClass === "board-preparing" ? "barista-mobile-lane-btn-preparing" : ""}`}
+                      onClick={() => setActiveMobileLaneIndex(laneIndex)}
+                      aria-pressed={isActive}
+                    >
+                      {mobileButtonLabel}
+                    </button>
+                  );
+                })}
+              </div>
 
-                    <div className="barista-column-list">
-                      {columnOrders.length === 0 ? <p className="barista-empty">No orders in this lane.</p> : null}
+              <section className="barista-grid barista-grid-cycler" aria-label="Active order kanban board">
+              {liveOrderLanes.map((lane, laneIndex) => (
+                <article
+                  key={lane.boardClass}
+                  className={`barista-column ${lane.boardClass} ${laneIndex === activeMobileLaneIndex ? "barista-column-mobile-active" : ""}`}
+                >
+                  <header className="barista-column-header">
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                      <p>{lane.countLabel}</p>
+                      <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        {lane.icon}
+                        {lane.heading}
+                      </h2>
+                    </div>
+                    <span className="barista-column-count" aria-label={`${lane.orders.length} orders`}>
+                      {lane.orders.length}
+                    </span>
+                  </header>
 
-                      {columnOrders.map((order) => {
-                        const items = normalizeOrderItems(order.items);
-                        const isDelivery = order.order_type === "delivery";
-                        const isGcash = order.payment_method === "gcash";
-                        const specialInstructions = order.special_instructions?.trim() || "";
-                        const actionConfig = getActionConfig(order.status);
-                        const isUpdating = updatingOrderId === order.id;
+                  <div className="barista-column-list">
+                    {lane.orders.length === 0 ? <p className="barista-empty">No orders in this lane.</p> : null}
 
-                        return (
-                          <article key={order.id} className="barista-order-card">
-                            <div className="barista-order-head">
-                              <div>
-                                <h3>{order.customer_name?.trim() || "Walk-in Customer"}</h3>
-                                <p>{order.customer_phone?.trim() || "No phone provided"}</p>
-                              </div>
+                    {lane.orders.map((order) => {
+                      const items = normalizeOrderItems(order.items);
+                      const isDelivery = order.order_type === "delivery";
+                      const isGcash = isGCashPayment(order.payment_method);
+                      const pickupTimeLabel = formatPickupTimeLabel(order.order_type, order.pickup_time);
+                      const specialInstructions = order.special_instructions?.trim() || "";
+                      const actionConfig = getActionConfig(order.status);
+                      const isUpdating = updatingOrderId === order.id;
+                      const isCollapsibleCard = lane.orders.length > 1;
+                      const isCardCollapsed = Boolean(collapsedOrderIds[order.id]) && isCollapsibleCard;
+                      const orderDetailsId = `barista-order-details-${order.id}`;
 
+                      return (
+                        <article key={order.id} className="barista-order-card">
+                          <div className="barista-order-head">
+                            <div>
+                              <h3>{order.customer_name?.trim() || "Walk-in Customer"}</h3>
+                              <p>{order.customer_phone?.trim() || "No phone provided"}</p>
+                            </div>
+
+                            <div className="barista-order-head-actions">
                               <span className={`barista-badge ${isDelivery ? "barista-badge-delivery" : "barista-badge-pickup"}`}>
                                 {orderTypeLabel(order.order_type)}
                               </span>
-                            </div>
 
+                              {isCollapsibleCard ? (
+                                <button
+                                  type="button"
+                                  className="barista-order-collapse-btn"
+                                  aria-expanded={!isCardCollapsed}
+                                  aria-controls={orderDetailsId}
+                                  onClick={() => toggleOrderCard(order.id)}
+                                >
+                                  {isCardCollapsed ? "Expand" : "Collapse"}
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div id={orderDetailsId} hidden={isCardCollapsed}>
                             {isDelivery ? (
                               <p className="barista-delivery-address">
                                 Deliver to: {order.delivery_address?.trim() || "No delivery address provided"}
@@ -1471,11 +2556,12 @@ export default function AdminDashboardPage() {
 
                             <div className="barista-meta-row">
                               <span>Payment: {paymentLabel(order.payment_method)}</span>
-                              {isGcash ? (
-                                <strong>Ref: {order.gcash_reference?.trim() || "Pending"}</strong>
-                              ) : (
-                                <strong>Pay at Counter</strong>
-                              )}
+                              {isGcash ? <strong>Ref: {order.gcash_reference?.trim() || "Pending"}</strong> : <strong>Pay at Counter</strong>}
+                            </div>
+
+                            <div className="barista-meta-row">
+                              <span>Pickup Time: {pickupTimeLabel}</span>
+                              <strong>Placed: {formatOrderDateTime(order.created_at)}</strong>
                             </div>
 
                             {specialInstructions ? (
@@ -1520,14 +2606,15 @@ export default function AdminDashboardPage() {
                                 {isUpdating ? "Updating..." : actionConfig.label}
                               </button>
                             ) : null}
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </article>
-                );
-              })}
-            </section>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </article>
+              ))}
+              </section>
+            </>
           ) : null}
 
         </section>
@@ -1545,11 +2632,7 @@ export default function AdminDashboardPage() {
             <button
               type="button"
               className="barista-manager-toggle"
-              onClick={() => {
-                setIsAddMenuFormOpen(true);
-                setMenuForm(EMPTY_MENU_FORM);
-                setMenuError(null);
-              }}
+              onClick={openCreateMenuForm}
             >
               Add New Drink
             </button>
@@ -1558,7 +2641,16 @@ export default function AdminDashboardPage() {
           {menuError ? <p className="barista-state barista-state-error">{menuError}</p> : null}
 
           {isMenuLoading ? (
-            <p className="barista-state">Loading menu items...</p>
+            <div className="barista-menu-table-wrap" aria-label="Loading menu items table" aria-busy="true">
+              <SkeletonPageSection titleWidth="36%" lineCount={2} lineWidths={["52%", "70%"]} />
+              {Array.from({ length: 5 }).map((_, index) => (
+                <SkeletonTableRow
+                  key={`menu-table-skeleton-${index}`}
+                  columns={6}
+                  columnWidths={["18%", "14%", "30%", "12%", "14%", "12%"]}
+                />
+              ))}
+            </div>
           ) : menuItems.length === 0 ? (
             <p className="barista-empty">No menu items available.</p>
           ) : (
@@ -1571,7 +2663,7 @@ export default function AdminDashboardPage() {
                     <th>Description</th>
                     <th>Price</th>
                     <th>Image</th>
-                    <th>Action</th>
+                    <th className="barista-table-action-cell">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1598,8 +2690,16 @@ export default function AdminDashboardPage() {
                         <td className="barista-menu-actions">
                           <button
                             type="button"
+                            className="barista-menu-edit-btn"
+                            onClick={() => handleStartEditMenuItem(menuItem)}
+                            disabled={isDeleting || isUpdatingImage}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
                             className="barista-danger-btn"
-                            onClick={() => void handleDeleteMenuItem(menuItem)}
+                            onClick={() => handleDeleteMenuItem(menuItem)}
                             disabled={isDeleting || isUpdatingImage}
                           >
                             {isDeleting ? "Deleting..." : "Delete"}
@@ -1641,7 +2741,16 @@ export default function AdminDashboardPage() {
           {highlightsError ? <p className="barista-state barista-state-error">{highlightsError}</p> : null}
 
           {isHighlightsLoading ? (
-            <p className="barista-state">Loading today highlights...</p>
+            <div className="barista-menu-table-wrap" aria-label="Loading today highlights table" aria-busy="true">
+              <SkeletonPageSection titleWidth="42%" lineCount={2} lineWidths={["58%", "76%"]} />
+              {Array.from({ length: 4 }).map((_, index) => (
+                <SkeletonTableRow
+                  key={`highlights-table-skeleton-${index}`}
+                  columns={4}
+                  columnWidths={["24%", "42%", "16%", "18%"]}
+                />
+              ))}
+            </div>
           ) : todayHighlightItems.length === 0 ? (
             <p className="barista-empty">No highlighted drinks yet. Add one to show quick-add options on /order.</p>
           ) : (
@@ -1652,7 +2761,7 @@ export default function AdminDashboardPage() {
                     <th>Drink</th>
                     <th>Description</th>
                     <th>Price</th>
-                    <th>Action</th>
+                    <th className="barista-table-action-cell">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1668,7 +2777,7 @@ export default function AdminDashboardPage() {
                           <button
                             type="button"
                             className="barista-danger-btn"
-                            onClick={() => void handleDeleteTodayHighlight(rowId, item.name)}
+                            onClick={() => handleDeleteTodayHighlight(rowId, item.name)}
                             disabled={isDeleting}
                           >
                             {isDeleting ? "Removing..." : "Remove"}
@@ -1684,103 +2793,166 @@ export default function AdminDashboardPage() {
         </section>
       ) : null}
 
-      {activeTab === "today-bar" ? (
-        <section className="barista-manager-panel" aria-label="Today at the Bar manager">
+      {activeTab === "promotional" ? (
+        <section className="barista-manager-panel" aria-label="Promotional manager">
           <header className="barista-manager-head">
             <div>
               <p className="barista-dashboard-kicker">Owner CMS</p>
-              <h2>Today at the Bar</h2>
-              <p>Edit the landing page hero card content shown on the homepage.</p>
+              <h2>Promotional</h2>
+              <p>Manage homepage promo carousel settings and slides.</p>
             </div>
           </header>
 
           {todayAtBarError ? <p className="barista-state barista-state-error">{todayAtBarError}</p> : null}
 
           {isTodayAtBarLoading ? (
-            <p className="barista-state">Loading Today at the Bar content...</p>
+            <div className="barista-manager-form barista-manager-form-stretch" aria-label="Loading promotional form" aria-busy="true">
+              <SkeletonFormBlock fields={4} />
+            </div>
           ) : (
             <form className="barista-manager-form barista-manager-form-stretch" onSubmit={handleSaveTodayAtBar}>
               <div className="barista-manager-form-grid">
-                <label className="barista-form-field" htmlFor="todayBarTitle">
-                  Title
+                <label className="barista-form-field barista-form-field-toggle" htmlFor="todayBarCarouselEnabled">
                   <input
-                    id="todayBarTitle"
-                    type="text"
-                    value={todayAtBarForm.title}
+                    id="todayBarCarouselEnabled"
+                    type="checkbox"
+                    checked={todayAtBarForm.carouselEnabled}
                     onChange={(event) =>
-                      setTodayAtBarForm((previousForm) => ({ ...previousForm, title: event.target.value }))
+                      setTodayAtBarForm((previousForm) => ({ ...previousForm, carouselEnabled: event.target.checked }))
                     }
-                    placeholder="Today at the Bar"
+                  />
+                  <span>Carousel Enabled</span>
+                </label>
+
+                <label className="barista-form-field barista-form-field-toggle" htmlFor="todayBarCarouselAutoplay">
+                  <input
+                    id="todayBarCarouselAutoplay"
+                    type="checkbox"
+                    checked={todayAtBarForm.carouselAutoplay}
+                    onChange={(event) =>
+                      setTodayAtBarForm((previousForm) => ({ ...previousForm, carouselAutoplay: event.target.checked }))
+                    }
+                  />
+                  <span>Carousel Autoplay</span>
+                </label>
+
+                <label className="barista-form-field" htmlFor="todayBarCarouselIntervalMs">
+                  Carousel Interval (ms)
+                  <input
+                    id="todayBarCarouselIntervalMs"
+                    type="number"
+                    min={TODAY_AT_BAR_CAROUSEL_INTERVAL_MIN}
+                    max={TODAY_AT_BAR_CAROUSEL_INTERVAL_MAX}
+                    step={100}
+                    value={todayAtBarForm.carouselIntervalMs}
+                    onChange={(event) =>
+                      setTodayAtBarForm((previousForm) => ({ ...previousForm, carouselIntervalMs: event.target.value }))
+                    }
+                    placeholder={String(TODAY_AT_BAR_CAROUSEL_INTERVAL_DEFAULT)}
                   />
                 </label>
 
-                <label className="barista-form-field" htmlFor="todayBarDose">
-                  Dose
-                  <input
-                    id="todayBarDose"
-                    type="text"
-                    value={todayAtBarForm.dose}
-                    onChange={(event) =>
-                      setTodayAtBarForm((previousForm) => ({ ...previousForm, dose: event.target.value }))
-                    }
-                    placeholder="18g"
-                  />
-                </label>
+                <div className="barista-form-field barista-form-field-full" aria-label="Carousel slides editor">
+                  <span>Carousel Slides</span>
+                  <p className="barista-image-helper">
+                    Add one or more slides. Only slides with an image URL are saved.
+                  </p>
 
-                <label className="barista-form-field" htmlFor="todayBarExtractionTime">
-                  Extraction Time
-                  <input
-                    id="todayBarExtractionTime"
-                    type="text"
-                    value={todayAtBarForm.extractionTime}
-                    onChange={(event) =>
-                      setTodayAtBarForm((previousForm) => ({ ...previousForm, extractionTime: event.target.value }))
-                    }
-                    placeholder="27s"
-                  />
-                </label>
+                  {todayAtBarForm.carouselSlides.length === 0 ? (
+                    <p className="barista-image-helper">No slides added yet.</p>
+                  ) : (
+                    todayAtBarForm.carouselSlides.map((slide, index) => (
+                      <article key={slide.id} className="barista-promo-slide-card">
+                        <header className="barista-promo-slide-card-head">
+                          <h3 className="barista-promo-slide-card-title">Slide {index + 1}</h3>
+                          <button
+                            type="button"
+                            className="barista-order-collapse-btn barista-promo-slide-collapse-btn"
+                            aria-expanded={!collapsedPromotionalSlideIds[slide.id]}
+                            aria-controls={`todayBarSlideFields-${slide.id}`}
+                            onClick={() => togglePromotionalSlideCard(slide.id)}
+                          >
+                            {collapsedPromotionalSlideIds[slide.id] ? "Expand" : "Collapse"}
+                          </button>
+                        </header>
 
-                <label className="barista-form-field" htmlFor="todayBarBrewTemp">
-                  Brew Temp
-                  <input
-                    id="todayBarBrewTemp"
-                    type="text"
-                    value={todayAtBarForm.brewTemp}
-                    onChange={(event) =>
-                      setTodayAtBarForm((previousForm) => ({ ...previousForm, brewTemp: event.target.value }))
-                    }
-                    placeholder="92C"
-                  />
-                </label>
+                        <div
+                          id={`todayBarSlideFields-${slide.id}`}
+                          className="barista-manager-form-grid barista-promo-slide-fields"
+                          hidden={Boolean(collapsedPromotionalSlideIds[slide.id])}
+                        >
+                          <label className="barista-form-field barista-form-field-full" htmlFor={`todayBarSlideImage-${slide.id}`}>
+                            Slide {index + 1} Image URL
+                            <div className="barista-promo-slide-image-actions">
+                              <button
+                                type="button"
+                                className="barista-menu-image-btn"
+                                onClick={() => openPromoImagePicker(slide.id)}
+                              >
+                                Choose from Bucket
+                              </button>
+                              <span className="barista-image-helper">Manual URL still works as fallback.</span>
+                            </div>
+                            <input
+                              id={`todayBarSlideImage-${slide.id}`}
+                              type="text"
+                              value={slide.imageUrl}
+                              onChange={(event) =>
+                                handleUpdateTodayAtBarSlide(slide.id, "imageUrl", event.target.value)
+                              }
+                              placeholder="https://..."
+                            />
+                          </label>
 
-                <label className="barista-form-field" htmlFor="todayBarGuestScore">
-                  Guest Score
-                  <input
-                    id="todayBarGuestScore"
-                    type="text"
-                    value={todayAtBarForm.guestScore}
-                    onChange={(event) =>
-                      setTodayAtBarForm((previousForm) => ({ ...previousForm, guestScore: event.target.value }))
-                    }
-                    placeholder="4.9 / 5"
-                  />
-                </label>
+                          <label className="barista-form-field" htmlFor={`todayBarSlideTitle-${slide.id}`}>
+                            Slide Title (Optional)
+                            <input
+                              id={`todayBarSlideTitle-${slide.id}`}
+                              type="text"
+                              value={slide.title}
+                              onChange={(event) =>
+                                handleUpdateTodayAtBarSlide(slide.id, "title", event.target.value)
+                              }
+                              placeholder="Featured roast"
+                            />
+                          </label>
 
-                <label className="barista-form-field barista-form-field-full" htmlFor="todayBarDescription">
-                  Description
-                  <textarea
-                    id="todayBarDescription"
-                    rows={4}
-                    value={todayAtBarForm.description}
-                    onChange={(event) =>
-                      setTodayAtBarForm((previousForm) => ({ ...previousForm, description: event.target.value }))
-                    }
-                    placeholder="Single-origin updates, roast notes, and daily bar highlights."
-                  />
-                </label>
+                          <label className="barista-form-field" htmlFor={`todayBarSlideDescription-${slide.id}`}>
+                            Slide Description (Optional)
+                            <input
+                              id={`todayBarSlideDescription-${slide.id}`}
+                              type="text"
+                              value={slide.description}
+                              onChange={(event) =>
+                                handleUpdateTodayAtBarSlide(slide.id, "description", event.target.value)
+                              }
+                              placeholder="Citrus bloom, cacao finish"
+                            />
+                          </label>
+
+                          <button
+                            type="button"
+                            className="barista-danger-btn"
+                            onClick={() => handleRemoveTodayAtBarSlide(slide.id)}
+                          >
+                            Remove Slide
+                          </button>
+                        </div>
+                      </article>
+                    ))
+                  )}
+
+                  <button type="button" className="barista-logout-btn" onClick={handleAddTodayAtBarSlide}>
+                    Add Slide
+                  </button>
+                </div>
               </div>
 
-              <button type="submit" className="barista-action-btn barista-manager-submit" disabled={isSavingTodayAtBar}>
+              <button
+                type="submit"
+                className="barista-action-btn barista-manager-submit barista-promotional-submit"
+                disabled={isSavingTodayAtBar}
+              >
                 {isSavingTodayAtBar ? "Saving..." : "Save Changes"}
               </button>
             </form>
@@ -1789,39 +2961,103 @@ export default function AdminDashboardPage() {
       ) : null}
 
       {activeTab === "sales" ? (
-        <section className="barista-manager-panel" aria-label="Sales summary">
+        <section className="barista-manager-panel barista-sales-manager-panel" aria-label="Sales summary">
           <header className="barista-manager-head">
             <div>
               <p className="barista-dashboard-kicker">Owner Analytics</p>
               <h2>Sales Summary</h2>
               <p>Snapshot of completed sales pulled from live and archived orders.</p>
             </div>
+
+            <div className="sales-summary-controls sales-summary-controls-compact" role="group" aria-label="Sales summary filters">
+              <label className="sales-summary-control" htmlFor="salesFilterMode">
+                <span>View Mode</span>
+                <select
+                  id="salesFilterMode"
+                  value={filterMode}
+                  onChange={(event) => setFilterMode(event.target.value === "monthly" ? "monthly" : "daily")}
+                >
+                  <option value="daily">Daily View</option>
+                  <option value="monthly">Monthly View</option>
+                </select>
+              </label>
+
+              {filterMode === "daily" ? (
+                <label className="sales-summary-control" htmlFor="salesSelectedDay">
+                  <span>Selected Day</span>
+                  <input
+                    id="salesSelectedDay"
+                    type="date"
+                    value={selectedDay}
+                    onChange={(event) => setSelectedDay(event.target.value)}
+                  />
+                </label>
+              ) : (
+                <label className="sales-summary-control" htmlFor="salesSelectedMonth">
+                  <span>Selected Month</span>
+                  <input
+                    id="salesSelectedMonth"
+                    type="month"
+                    value={selectedMonth}
+                    onChange={(event) => setSelectedMonth(event.target.value)}
+                  />
+                </label>
+              )}
+            </div>
           </header>
 
-          {isLoading ? <p className="barista-state">Loading sales data...</p> : null}
-          {fetchError ? <p className="barista-state barista-state-error">{fetchError}</p> : null}
-
-          {!isLoading && !fetchError ? (
-            <>
+          {isSalesLoading ? (
+            <div className="barista-sales-content" aria-label="Loading sales summary" aria-busy="true">
               <div className="barista-sales-grid barista-sales-grid-panel">
-                <article className="barista-sales-card">
-                  <p>Today</p>
-                  <strong>{formatCurrency(salesTotals.today)}</strong>
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <article className="barista-sales-card" key={`sales-card-skeleton-${index}`}>
+                    <Skeleton type="text" width="44%" />
+                    <Skeleton type="text" width="68%" />
+                  </article>
+                ))}
+              </div>
+
+              <div className="barista-sales-list" role="list" aria-label="Loading completed orders list">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <SkeletonListRow key={`sales-list-skeleton-${index}`} />
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {salesFetchError ? <p className="barista-state barista-state-error">{salesFetchError}</p> : null}
+          {salesCostError ? <p className="barista-state barista-state-error">{salesCostError}</p> : null}
+
+          {!isSalesLoading && !salesFetchError ? (
+            <div className="barista-sales-content">
+              <div className="barista-sales-grid barista-sales-grid-panel">
+                <article className="barista-sales-card sales-metric sales-metric-profit">
+                  <p>Gross Profit</p>
+                  <strong>{formatCurrency(salesMetrics.grossProfit)}</strong>
                 </article>
 
-                <article className="barista-sales-card">
-                  <p>This Week</p>
-                  <strong>{formatCurrency(salesTotals.week)}</strong>
+                <article className="barista-sales-card sales-metric">
+                  <p>Total Gross Sales</p>
+                  <strong>{formatCurrency(salesMetrics.gross)}</strong>
                 </article>
 
-                <article className="barista-sales-card">
-                  <p>This Month</p>
-                  <strong>{formatCurrency(salesTotals.month)}</strong>
+                <article className="barista-sales-card sales-metric">
+                  <p>Total COGS</p>
+                  <strong>{formatCurrency(salesMetrics.cogs)}</strong>
+                </article>
+
+                <article className="barista-sales-card sales-metric">
+                  <p>Cash Total</p>
+                  <strong>{formatCurrency(salesMetrics.cash)}</strong>
+                </article>
+
+                <article className="barista-sales-card sales-metric">
+                  <p>GCash Total</p>
+                  <strong>{formatCurrency(salesMetrics.gcash)}</strong>
                 </article>
               </div>
 
               {recentCompletedOrders.length === 0 ? (
-                <p className="barista-empty">No completed orders yet.</p>
+                <p className="barista-empty">No completed orders for the selected period yet.</p>
               ) : (
                 <div className="barista-sales-list" role="list" aria-label="Recent completed orders">
                   {recentCompletedOrders.map((order) => (
@@ -1829,7 +3065,7 @@ export default function AdminDashboardPage() {
                       <div>
                         <p className="barista-sales-list-id">Order {order.id.slice(0, 8).toUpperCase()}</p>
                         <p className="barista-sales-list-meta">
-                          {order.customer_name?.trim() || "Walk-in Customer"} | {orderTypeLabel(order.order_type)} | {formatOrderDateTime(order.created_at)}
+                          {order.customer_name?.trim() || "Walk-in Customer"} | {orderTypeLabel(order.order_type)} | Pickup: {formatPickupTimeLabel(order.order_type, order.pickup_time)} | {formatOrderDateTime(order.created_at)}
                         </p>
                       </div>
                       <strong>{formatCurrency(order.total_price)}</strong>
@@ -1837,8 +3073,20 @@ export default function AdminDashboardPage() {
                   ))}
                 </div>
               )}
-            </>
+            </div>
           ) : null}
+        </section>
+      ) : null}
+
+      {activeTab === "inventory" ? (
+        <section className="barista-manager-panel" aria-label="Inventory manager">
+          <header className="barista-manager-head">
+            <div>
+              <h2>Inventory Manager</h2>
+              <p>Maintain ingredient costs and assign recipe ingredients per menu item.</p>
+            </div>
+          </header>
+          <InventoryManager />
         </section>
       ) : null}
 
@@ -1850,7 +3098,7 @@ export default function AdminDashboardPage() {
           role="presentation"
           onClick={() => {
             setIsAddMenuFormOpen(false);
-            setMenuForm(EMPTY_MENU_FORM);
+            resetMenuFormState();
             setMenuError(null);
           }}
         >
@@ -1858,13 +3106,13 @@ export default function AdminDashboardPage() {
             className="barista-image-modal barista-manager-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="Add new drink"
+            aria-label={editingItem ? `Edit ${editingItem.name}` : "Add new drink"}
             onClick={(event) => event.stopPropagation()}
           >
             <header className="barista-image-modal-head">
               <div>
                 <p className="barista-dashboard-kicker">Owner CMS</p>
-                <h3>Add New Drink</h3>
+                <h3>{editingItem ? "Edit Drink" : "Add New Drink"}</h3>
               </div>
 
               <button
@@ -1872,7 +3120,7 @@ export default function AdminDashboardPage() {
                 className="barista-image-modal-close"
                 onClick={() => {
                   setIsAddMenuFormOpen(false);
-                  setMenuForm(EMPTY_MENU_FORM);
+                  resetMenuFormState();
                   setMenuError(null);
                 }}
                 aria-label="Close add drink form"
@@ -1953,19 +3201,30 @@ export default function AdminDashboardPage() {
                   className="barista-logout-btn"
                   onClick={() => {
                     setIsAddMenuFormOpen(false);
-                    setMenuForm(EMPTY_MENU_FORM);
+                    resetMenuFormState();
                     setMenuError(null);
                   }}
                 >
                   Cancel
                 </button>
 
+                {editingItem ? (
+                  <button
+                    type="button"
+                    className="barista-logout-btn"
+                    onClick={handleCancelEditMenuItem}
+                    disabled={isSavingMenuItem}
+                  >
+                    Cancel Edit
+                  </button>
+                ) : null}
+
                 <button
                   type="submit"
                   className="barista-action-btn barista-manager-submit"
                   disabled={isSavingMenuItem}
                 >
-                  {isSavingMenuItem ? "Saving..." : "Add Drink"}
+                  {isSavingMenuItem ? "Saving..." : editingItem ? "Update Item" : "Add Item"}
                 </button>
               </div>
             </form>
@@ -2110,7 +3369,7 @@ export default function AdminDashboardPage() {
                   <button
                     type="button"
                     className="barista-menu-remove-image"
-                    onClick={() => void handleRemoveActiveMenuImage()}
+                    onClick={handleRemoveActiveMenuImage}
                     disabled={!activeMenuImageItem.image_url || isUpdatingActiveMenuImage}
                   >
                     Remove Image
@@ -2121,6 +3380,10 @@ export default function AdminDashboardPage() {
                   </button>
                 </div>
               </>
+            ) : isProcessingMenuImageUpload || isMenuImageDraftLoading ? (
+              <div className="barista-image-editor-wrap" aria-busy="true" aria-label="Processing menu image editor">
+                <SkeletonModalBody sections={1} />
+              </div>
             ) : (
               <div className="barista-image-editor-wrap">
                 <div className="barista-image-editor-canvas-wrap">
@@ -2209,6 +3472,163 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
             )}
+          </section>
+        </div>
+      ) : null}
+
+      {isPromoImagePickerOpen ? (
+        <div className="barista-image-modal-backdrop" role="presentation" onClick={closePromoImagePicker}>
+          <section
+            className="barista-image-modal barista-manager-modal barista-promo-picker-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="promoBucketPickerTitle"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="barista-image-modal-head">
+              <div>
+                <p className="barista-dashboard-kicker">Promotional Slide Image</p>
+                <h3 id="promoBucketPickerTitle">
+                  {activePromoSlide ? "Choose from Bucket" : "Select Slide Image"}
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                className="barista-image-modal-close"
+                onClick={closePromoImagePicker}
+                aria-label="Close image picker"
+              >
+                X
+              </button>
+            </header>
+
+            <p className="barista-image-helper barista-promo-picker-config">
+              Bucket: {PROMO_IMAGE_BUCKET_NAME || "Not configured"}
+              {PROMO_IMAGE_BUCKET_PREFIX ? ` / ${PROMO_IMAGE_BUCKET_PREFIX}` : ""}
+            </p>
+
+            <div className="barista-promo-picker-body" aria-live="polite">
+              {isPromoBucketImagesLoading ? (
+                <div className="barista-promo-picker-loading" aria-label="Loading bucket images" aria-busy="true">
+                  <SkeletonModalBody sections={2} />
+                </div>
+              ) : promoBucketImagesError ? (
+                <div className="barista-promo-picker-state">
+                  <p className="barista-state barista-state-error">{promoBucketImagesError}</p>
+                  <button
+                    type="button"
+                    className="barista-logout-btn"
+                    onClick={() => {
+                      void loadPromoBucketImages();
+                    }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : promoBucketImages.length === 0 ? (
+                <div className="barista-promo-picker-state">
+                  <p className="barista-empty">
+                    No image files found in this bucket/folder yet.
+                    {normalizePromoStoragePath(PROMO_IMAGE_BUCKET_PREFIX)
+                      ? ` Active prefix: ${normalizePromoStoragePath(PROMO_IMAGE_BUCKET_PREFIX)}`
+                      : " Active prefix: / (bucket root)"}
+                  </p>
+                </div>
+              ) : (
+                <div className="barista-promo-picker-grid" role="list" aria-label="Bucket image files">
+                  {promoBucketImages.map((option) => {
+                    const isSelected = activePromoSlide?.imageUrl.trim() === option.publicUrl;
+
+                    return (
+                      <button
+                        key={option.path}
+                        type="button"
+                        className={`barista-promo-picker-item${isSelected ? " is-selected" : ""}`}
+                        onClick={() => handleSelectPromoBucketImage(option.publicUrl)}
+                        aria-label={`Use ${option.name} for this slide image`}
+                        role="listitem"
+                      >
+                        <span
+                          className="barista-promo-picker-thumb"
+                          style={{ backgroundImage: `url(${option.publicUrl})` }}
+                          aria-hidden="true"
+                        />
+                        <span className="barista-promo-picker-copy">
+                          <strong>{option.name}</strong>
+                          <small>{option.path}</small>
+                          <small>
+                            {formatFileSize(option.sizeInBytes)}
+                            {option.updatedAt ? ` | ${new Date(option.updatedAt).toLocaleDateString("en-PH")}` : ""}
+                          </small>
+                          {isSelected ? <span className="barista-promo-picker-selected">Selected</span> : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="barista-image-modal-actions">
+              <button type="button" className="barista-logout-btn" onClick={closePromoImagePicker}>
+                Close
+              </button>
+
+              <button
+                type="button"
+                className="barista-action-btn barista-image-modal-action"
+                onClick={() => {
+                  void loadPromoBucketImages();
+                }}
+                disabled={isPromoBucketImagesLoading}
+              >
+                {isPromoBucketImagesLoading ? "Refreshing..." : "Refresh List"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {confirmationModal ? (
+        <div className="barista-image-modal-backdrop" role="presentation" onClick={closeConfirmationModal}>
+          <section
+            className="barista-image-modal barista-manager-modal barista-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="baristaConfirmTitle"
+            aria-describedby="baristaConfirmMessage"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="barista-image-modal-head">
+              <div>
+                <p className="barista-dashboard-kicker">Confirm Action</p>
+                <h3 id="baristaConfirmTitle">{confirmationModal.title}</h3>
+              </div>
+
+              <button
+                type="button"
+                className="barista-image-modal-close"
+                onClick={closeConfirmationModal}
+                aria-label="Close confirmation modal"
+              >
+                X
+              </button>
+            </header>
+
+            <p id="baristaConfirmMessage" className="barista-confirm-modal-copy">
+              {confirmationModal.message}
+            </p>
+
+            <div className="barista-image-modal-actions">
+              <button type="button" className="barista-logout-btn" onClick={closeConfirmationModal}>
+                Cancel
+              </button>
+
+              <button type="button" className="barista-danger-btn" onClick={handleConfirmModalAction}>
+                {confirmationModal.confirmLabel}
+              </button>
+            </div>
           </section>
         </div>
       ) : null}

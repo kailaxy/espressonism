@@ -1,15 +1,19 @@
 "use client";
 
-import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Hero,
   Navbar,
+  AuthModal,
   CategoryTabs,
   MenuGrid,
   ModifierModal,
   CartModal,
   OrderTimeline,
-  ReceiptView
+  ReceiptView,
+  Skeleton,
+  SkeletonGroup,
+  SkeletonPageSection
 } from "../components";
 import {
   type CartLine,
@@ -28,9 +32,6 @@ type OrderStatus = (typeof ORDER_STATUS_TRACKABLE)[number];
 type CheckoutStep = "cart" | "payment" | "tracking";
 
 const ORDER_DRAFT_STORAGE_KEY = "espressonism-order-draft-v1";
-const ORDER_HISTORY_STORAGE_KEY = "espressonism-order-history-v1";
-const ORDER_HISTORY_LIMIT = 12;
-const HISTORY_EDGE_OPEN_RATIO = 0.45;
 
 const DEFAULT_HIGHLIGHT_ITEM_NAMES = new Set([
   "spanish latte",
@@ -65,7 +66,7 @@ interface ToastMessage {
 
 interface PersistedOrderDraft {
   cartLines: CartLine[];
-  pickupWindow: string;
+  pickupTime: string;
   customerName: string;
   customerPhone: string;
   specialInstructions: string;
@@ -80,25 +81,10 @@ interface SubmittedOrderSnapshot {
   createdAt: string;
   lines: CartLine[];
   totalPrice: number;
+  orderType: OrderType;
+  pickupTime: string | null;
   paymentMethod: PaymentMethod;
   gcashReference: string;
-}
-
-interface OrderHistoryEntry extends SubmittedOrderSnapshot {
-  status: OrderStatus;
-  customerName: string;
-  specialInstructions: string;
-  pickupWindow: string;
-  orderType: OrderType;
-}
-
-interface HistorySwipeState {
-  pointerId: number | null;
-  startY: number;
-  startOffset: number;
-  currentOffset: number;
-  moved: boolean;
-  active: boolean;
 }
 
 function isOrderType(value: unknown): value is OrderType {
@@ -132,11 +118,32 @@ function mapMenuRowToItem(row: MenuItemRow): MenuItem {
   };
 }
 
-function pickupText(value: string): string {
+function generatePickupTimes(): string[] {
+  const now = new Date();
+  const prepReadyTime = new Date(now.getTime() + 15 * 60 * 1000);
+
+  const roundedMinutes = Math.ceil(prepReadyTime.getMinutes() / 15) * 15;
+  prepReadyTime.setMinutes(roundedMinutes, 0, 0);
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+
+  return Array.from({ length: 5 }, (_, index) => {
+    const slotTime = new Date(prepReadyTime.getTime() + index * 15 * 60 * 1000);
+    return formatter.format(slotTime);
+  });
+}
+
+function formatLegacyPickupWindow(value: string): string {
   if (value === "in-10") return "In 10 minutes";
   if (value === "in-20") return "In 20 minutes";
   if (value === "in-30") return "In 30 minutes";
-  return "On your arrival";
+  if (value === "custom") return "On your arrival";
+  return value;
 }
 
 function calculateUnitPrice(basePrice: number, size: SizeOption, milk: MilkOption): number {
@@ -178,14 +185,19 @@ function isCartLine(value: unknown): value is CartLine {
 
 function parseOrderDraft(rawDraft: string): PersistedOrderDraft | null {
   try {
-    const parsed = JSON.parse(rawDraft) as Partial<PersistedOrderDraft>;
+    const parsed = JSON.parse(rawDraft) as Partial<PersistedOrderDraft> & { pickupWindow?: string };
     if (!parsed || typeof parsed !== "object") return null;
 
     const safeCartLines = Array.isArray(parsed.cartLines) ? parsed.cartLines.filter(isCartLine) : [];
 
     return {
       cartLines: safeCartLines,
-      pickupWindow: typeof parsed.pickupWindow === "string" ? parsed.pickupWindow : "in-10",
+      pickupTime:
+        typeof parsed.pickupTime === "string"
+          ? parsed.pickupTime
+          : typeof parsed.pickupWindow === "string"
+            ? formatLegacyPickupWindow(parsed.pickupWindow)
+            : "",
       customerName: typeof parsed.customerName === "string" ? parsed.customerName : "",
       customerPhone: typeof parsed.customerPhone === "string" ? parsed.customerPhone : "",
       specialInstructions: typeof parsed.specialInstructions === "string" ? parsed.specialInstructions : "",
@@ -207,47 +219,6 @@ function normalizeOrderStatus(value: unknown): OrderStatus {
   return "received";
 }
 
-function parseOrderHistory(rawHistory: string): OrderHistoryEntry[] {
-  try {
-    const parsed = JSON.parse(rawHistory) as unknown;
-    if (!Array.isArray(parsed)) return [];
-
-    const safeHistory = parsed
-      .map((entry) => {
-        if (!entry || typeof entry !== "object") return null;
-
-        const candidate = entry as Partial<OrderHistoryEntry>;
-        const safeLines = Array.isArray(candidate.lines) ? candidate.lines.filter(isCartLine) : [];
-        if (!candidate.orderId || typeof candidate.orderId !== "string") return null;
-        if (!candidate.createdAt || typeof candidate.createdAt !== "string") return null;
-
-        return {
-          orderId: candidate.orderId,
-          createdAt: candidate.createdAt,
-          lines: safeLines,
-          totalPrice: typeof candidate.totalPrice === "number" && Number.isFinite(candidate.totalPrice) ? candidate.totalPrice : 0,
-          paymentMethod: isPaymentMethod(candidate.paymentMethod) ? candidate.paymentMethod : "cash",
-          gcashReference: typeof candidate.gcashReference === "string" ? candidate.gcashReference : "",
-          status: normalizeOrderStatus(candidate.status),
-          customerName: typeof candidate.customerName === "string" ? candidate.customerName : "Guest",
-          specialInstructions: typeof candidate.specialInstructions === "string" ? candidate.specialInstructions : "",
-          pickupWindow: typeof candidate.pickupWindow === "string" ? candidate.pickupWindow : "in-10",
-          orderType: isOrderType(candidate.orderType) ? candidate.orderType : "pickup"
-        } satisfies OrderHistoryEntry;
-      })
-      .filter((entry): entry is OrderHistoryEntry => Boolean(entry));
-
-    return safeHistory.slice(0, ORDER_HISTORY_LIMIT);
-  } catch {
-    return [];
-  }
-}
-
-function upsertOrderHistory(history: OrderHistoryEntry[], entry: OrderHistoryEntry): OrderHistoryEntry[] {
-  const deduped = history.filter((historyEntry) => historyEntry.orderId !== entry.orderId);
-  return [entry, ...deduped].slice(0, ORDER_HISTORY_LIMIT);
-}
-
 function mergeCartLines(existingLines: CartLine[], nextLines: CartLine[]): CartLine[] {
   const mergedLines = existingLines.map((line) => ({ ...line }));
 
@@ -264,18 +235,11 @@ function mergeCartLines(existingLines: CartLine[], nextLines: CartLine[]): CartL
   return mergedLines;
 }
 
-function orderStatusLabel(status: OrderStatus): string {
-  if (status === "received") return "Received";
-  if (status === "brewing") return "Preparing";
-  if (status === "ready") return "Ready";
-  if (status === "completed") return "Completed";
-  return "Cancelled";
-}
-
 function notifyTelegramOrderPlaced(payload: {
   orderId: string;
   customerName: string;
   orderType: OrderType;
+  pickupTime?: string | null;
   items: Array<{ name: string; quantity: number; size: SizeOption }>;
   totalPrice: number;
   specialInstructions?: string;
@@ -301,6 +265,40 @@ function notifyTelegramOrderPlaced(payload: {
   }
 }
 
+function HighlightListSkeleton() {
+  return (
+    <SkeletonGroup className="order-highlight-list">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={`highlight-skeleton-${index}`} className="order-highlight-item" role="presentation">
+          <span className="order-highlight-main">
+            <Skeleton type="text" width="62%" />
+            <Skeleton type="text" width="28%" />
+          </span>
+          <Skeleton type="text" className="order-highlight-add" width="3.5rem" />
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
+function MenuGridSkeleton() {
+  return (
+    <SkeletonGroup className="order-menu-grid-v2">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <SkeletonPageSection
+          key={`menu-card-skeleton-${index}`}
+          className="order-menu-card-v2"
+          includeMedia
+          mediaHeight="12rem"
+          titleWidth="58%"
+          lineCount={4}
+          lineWidths={["38%", "100%", "84%", "52%"]}
+        />
+      ))}
+    </SkeletonGroup>
+  );
+}
+
 export default function OrderPage() {
   const [activeCategory, setActiveCategory] = useState<"all" | MenuItem["category"]>("all");
   const [menuData, setMenuData] = useState<MenuItem[]>([]);
@@ -310,7 +308,8 @@ export default function OrderPage() {
   const [isHighlightsLoading, setIsHighlightsLoading] = useState(true);
 
   const [cartLines, setCartLines] = useState<CartLine[]>([]);
-  const [pickupWindow, setPickupWindow] = useState("in-10");
+  const [pickupTime, setPickupTime] = useState("");
+  const [pickupTimes, setPickupTimes] = useState<string[]>([]);
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   const [checkoutStep, setCheckoutStep] = useState<CheckoutStep>("cart");
   const [orderPlaced, setOrderPlaced] = useState(false);
@@ -326,34 +325,19 @@ export default function OrderPage() {
   const [specialInstructions, setSpecialInstructions] = useState("");
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  const [orderHistory, setOrderHistory] = useState<OrderHistoryEntry[]>([]);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [restoringOrderId, setRestoringOrderId] = useState<string | null>(null);
-  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
-  const [historyDrawerDragOffset, setHistoryDrawerDragOffset] = useState<number | null>(null);
-  const [historyDrawerClosedOffset, setHistoryDrawerClosedOffset] = useState(0);
 
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [selectedSize, setSelectedSize] = useState<SizeOption>("regular");
   const [selectedMilk, setSelectedMilk] = useState<MilkOption>("whole");
   const [isModifierOpen, setIsModifierOpen] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [user, setUser] = useState<{ id: string; email?: string | null } | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isCartBumping, setIsCartBumping] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const previousCartCountRef = useRef(0);
   const skipNextCartBumpRef = useRef(false);
-  const historyDrawerRef = useRef<HTMLElement | null>(null);
-  const historyHandleRef = useRef<HTMLButtonElement | null>(null);
-  const historySwipeStateRef = useRef<HistorySwipeState>({
-    pointerId: null,
-    startY: 0,
-    startOffset: 0,
-    currentOffset: 0,
-    moved: false,
-    active: false
-  });
-  const suppressHistoryHandleClickRef = useRef(false);
 
   const filteredItems = useMemo(() => {
     if (activeCategory === "all") return menuData;
@@ -366,9 +350,6 @@ export default function OrderPage() {
       return acc;
     }, {});
   }, [cartLines]);
-
-  const historyDrawerSnapOffset = isHistoryDrawerOpen ? 0 : historyDrawerClosedOffset;
-  const historyDrawerOffset = historyDrawerDragOffset ?? historyDrawerSnapOffset;
 
   const cartCount = useMemo(
     () => cartLines.reduce((sum, line) => sum + line.quantity, 0),
@@ -445,6 +426,44 @@ export default function OrderPage() {
   useEffect(() => {
     let isMounted = true;
 
+    const syncSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!isMounted) return;
+
+      const nextUser = data?.session?.user;
+      if (nextUser?.id) {
+        setUser({
+          id: nextUser.id,
+          email: typeof nextUser.email === "string" ? nextUser.email : null
+        });
+      } else {
+        setUser(null);
+      }
+    };
+
+    void syncSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event: unknown, session: unknown) => {
+      const nextUser = (session as { user?: { id?: string; email?: string | null } | null } | null)?.user;
+      if (nextUser?.id) {
+        setUser({
+          id: nextUser.id,
+          email: typeof nextUser.email === "string" ? nextUser.email : null
+        });
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
     const fetchTodayHighlights = async () => {
       setIsHighlightsLoading(true);
 
@@ -471,6 +490,12 @@ export default function OrderPage() {
   }, []);
 
   useEffect(() => {
+    const nextPickupTimes = generatePickupTimes();
+    setPickupTimes(nextPickupTimes);
+    setPickupTime((currentValue) => currentValue || nextPickupTimes[0] || "");
+  }, []);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
 
     const rawDraft = window.localStorage.getItem(ORDER_DRAFT_STORAGE_KEY);
@@ -484,7 +509,7 @@ export default function OrderPage() {
 
     skipNextCartBumpRef.current = true;
     setCartLines(draft.cartLines);
-    setPickupWindow(draft.pickupWindow);
+    setPickupTime(draft.pickupTime);
     setOrderType(draft.orderType);
     setPaymentMethod(draft.paymentMethod);
     setGcashReference(draft.gcashReference);
@@ -497,24 +522,9 @@ export default function OrderPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const rawHistory = window.localStorage.getItem(ORDER_HISTORY_STORAGE_KEY);
-    if (!rawHistory) return;
-
-    const parsedHistory = parseOrderHistory(rawHistory);
-    if (parsedHistory.length === 0) {
-      window.localStorage.removeItem(ORDER_HISTORY_STORAGE_KEY);
-      return;
-    }
-
-    setOrderHistory(parsedHistory);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
     const draft: PersistedOrderDraft = {
       cartLines,
-      pickupWindow,
+      pickupTime,
       orderType,
       paymentMethod,
       gcashReference,
@@ -525,46 +535,7 @@ export default function OrderPage() {
     };
 
     window.localStorage.setItem(ORDER_DRAFT_STORAGE_KEY, JSON.stringify(draft));
-  }, [cartLines, pickupWindow, orderType, paymentMethod, gcashReference, deliveryAddress, customerName, customerPhone, specialInstructions]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    if (orderHistory.length === 0) {
-      window.localStorage.removeItem(ORDER_HISTORY_STORAGE_KEY);
-      return;
-    }
-
-    window.localStorage.setItem(ORDER_HISTORY_STORAGE_KEY, JSON.stringify(orderHistory));
-  }, [orderHistory]);
-
-  useEffect(() => {
-    if (orderHistory.length > 0) return;
-    setIsHistoryDrawerOpen(false);
-    setHistoryDrawerDragOffset(null);
-  }, [orderHistory.length]);
-
-  useEffect(() => {
-    if (orderHistory.length === 0) return;
-
-    const updateHistoryDrawerClosedOffset = () => {
-      const drawerElement = historyDrawerRef.current;
-      if (!drawerElement) return;
-
-      const drawerHeight = drawerElement.getBoundingClientRect().height;
-      const measuredHandleHeight = historyHandleRef.current?.getBoundingClientRect().height ?? 0;
-      const visibleHandleHeight = measuredHandleHeight > 0 ? measuredHandleHeight : 36;
-      const closedOffset = Math.max(0, drawerHeight - visibleHandleHeight);
-      setHistoryDrawerClosedOffset(closedOffset);
-    };
-
-    updateHistoryDrawerClosedOffset();
-    window.addEventListener("resize", updateHistoryDrawerClosedOffset);
-
-    return () => {
-      window.removeEventListener("resize", updateHistoryDrawerClosedOffset);
-    };
-  }, [orderHistory.length]);
+  }, [cartLines, pickupTime, orderType, paymentMethod, gcashReference, deliveryAddress, customerName, customerPhone, specialInstructions]);
 
   useEffect(() => {
     if (skipNextCartBumpRef.current) {
@@ -615,26 +586,35 @@ export default function OrderPage() {
     }
   }, [orderPlaced]);
 
-  useEffect(() => {
-    if (!currentOrderId) return;
-
-    setOrderHistory((previousHistory) => {
-      const matchingEntry = previousHistory.find((entry) => entry.orderId === currentOrderId);
-      if (!matchingEntry || matchingEntry.status === orderStatus) return previousHistory;
-
-      return upsertOrderHistory(previousHistory, {
-        ...matchingEntry,
-        status: orderStatus
-      });
-    });
-  }, [currentOrderId, orderStatus]);
-
   const addToast = (message: string) => {
     const id = Date.now() + Math.floor(Math.random() * 1000);
     setToasts((prev) => [...prev, { id, message }]);
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 2200);
+  };
+
+  const handleAuthSuccess = async () => {
+    const { data } = await supabase.auth.getSession();
+    const nextUser = data?.session?.user;
+
+    if (nextUser?.id) {
+      setUser({
+        id: nextUser.id,
+        email: typeof nextUser.email === "string" ? nextUser.email : null
+      });
+      addToast("Signed in. Stamps enabled for this order.");
+    } else {
+      setUser(null);
+    }
+
+    setIsAuthModalOpen(false);
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    addToast("Signed out. You can still checkout as guest.");
   };
 
   const openModifier = (item: MenuItem) => {
@@ -704,18 +684,7 @@ export default function OrderPage() {
   };
 
   const handleCheckout = () => {
-    const needsDeliveryAddress = orderType === "delivery" && deliveryAddress.trim().length === 0;
-    const missingName = customerName.trim().length === 0;
-    const missingPhone = customerPhone.trim().length === 0;
-
-    if (cartLines.length === 0 || missingName || missingPhone || needsDeliveryAddress || isCheckingOut) {
-      if (needsDeliveryAddress) {
-        setCheckoutError("Delivery address is required for delivery orders.");
-      } else if (missingName) {
-        setCheckoutError("Customer name is required.");
-      } else if (missingPhone) {
-        setCheckoutError("Contact number is required.");
-      }
+    if (cartLines.length === 0 || isCheckingOut) {
       return;
     }
 
@@ -761,7 +730,7 @@ export default function OrderPage() {
       image_url: line.imageUrl ?? null
     }));
 
-    const orderInsertPayload = {
+    const orderInsertPayload: Record<string, unknown> = {
       id: clientOrderId,
       customer_name: customerName.trim(),
       customer_phone: customerPhone.trim(),
@@ -769,17 +738,46 @@ export default function OrderPage() {
       total_price: grandTotal,
       status: "received",
       special_instructions: specialInstructions.trim() || null,
+      pickup_time: pickupTime || null,
       order_type: orderType,
       payment_method: paymentMethod,
       gcash_reference: paymentMethod === "gcash" ? gcashReference.trim() : null,
-      delivery_address: orderType === "delivery" ? deliveryAddress.trim() : null
+      delivery_address: orderType === "delivery" ? deliveryAddress.trim() : null,
+      user_id: user?.id ?? null
     };
 
-    const { data, error } = await supabase
+    let insertResponse = await supabase
       .from("orders")
       .insert([orderInsertPayload])
       .select("id, status, created_at")
       .single();
+
+    // Some deployments may not have optional columns yet (pickup_time, user_id).
+    if (insertResponse.error) {
+      const fallbackPayload = { ...orderInsertPayload };
+      const errorMessage = insertResponse.error.message || "";
+      let shouldRetryWithoutColumn = false;
+
+      if (/pickup_time/i.test(errorMessage)) {
+        delete fallbackPayload.pickup_time;
+        shouldRetryWithoutColumn = true;
+      }
+
+      if (/user_id/i.test(errorMessage)) {
+        delete fallbackPayload.user_id;
+        shouldRetryWithoutColumn = true;
+      }
+
+      if (shouldRetryWithoutColumn) {
+        insertResponse = await supabase
+          .from("orders")
+          .insert([fallbackPayload])
+          .select("id, status, created_at")
+          .single();
+      }
+    }
+
+    const { data, error } = insertResponse;
 
     if (error || !data?.id) {
       setCheckoutError(error?.message || "Unable to place your order. Please try again.");
@@ -793,21 +791,13 @@ export default function OrderPage() {
       createdAt: typeof data.created_at === "string" ? data.created_at : submittedAt,
       lines: cartLines.map((line) => ({ ...line })),
       totalPrice: grandTotal,
+      orderType,
+      pickupTime: orderType === "pickup" ? (pickupTime.trim() || null) : null,
       paymentMethod,
       gcashReference: paymentMethod === "gcash" ? gcashReference.trim() : ""
     };
 
     setSubmittedOrder(submittedSnapshot);
-    setOrderHistory((previousHistory) =>
-      upsertOrderHistory(previousHistory, {
-        ...submittedSnapshot,
-        status: normalizedStatus,
-        customerName: customerName.trim() || "Guest",
-        specialInstructions: specialInstructions.trim(),
-        pickupWindow,
-        orderType
-      })
-    );
 
     setCurrentOrderId(data.id);
     setCartLines([]);
@@ -822,6 +812,7 @@ export default function OrderPage() {
       orderId: data.id,
       customerName: customerName.trim(),
       orderType,
+      pickupTime: orderType === "pickup" ? (pickupTime.trim() || null) : null,
       items: cartLines.map((line) => ({
         name: line.name,
         quantity: line.quantity,
@@ -830,132 +821,6 @@ export default function OrderPage() {
       totalPrice: grandTotal,
       specialInstructions: specialInstructions.trim()
     });
-  };
-
-  const resetHistorySwipeState = () => {
-    historySwipeStateRef.current = {
-      pointerId: null,
-      startY: 0,
-      startOffset: 0,
-      currentOffset: 0,
-      moved: false,
-      active: false
-    };
-  };
-
-  const handleHistoryDrawerToggle = () => {
-    if (suppressHistoryHandleClickRef.current) {
-      suppressHistoryHandleClickRef.current = false;
-      return;
-    }
-
-    setIsHistoryDrawerOpen((isOpen) => !isOpen);
-    setHistoryDrawerDragOffset(null);
-  };
-
-  const handleHistoryHandlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (orderHistory.length === 0 || historyDrawerClosedOffset <= 0) return;
-
-    event.currentTarget.setPointerCapture(event.pointerId);
-    historySwipeStateRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startOffset: historyDrawerOffset,
-      currentOffset: historyDrawerOffset,
-      moved: false,
-      active: true
-    };
-    setHistoryDrawerDragOffset(historyDrawerOffset);
-  };
-
-  const handleHistoryHandlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const swipeState = historySwipeStateRef.current;
-    if (!swipeState.active || swipeState.pointerId !== event.pointerId) return;
-
-    const delta = event.clientY - swipeState.startY;
-    const nextOffset = Math.min(
-      historyDrawerClosedOffset,
-      Math.max(0, swipeState.startOffset + delta)
-    );
-
-    swipeState.currentOffset = nextOffset;
-    if (!swipeState.moved && Math.abs(delta) > 6) {
-      swipeState.moved = true;
-    }
-
-    setHistoryDrawerDragOffset(nextOffset);
-  };
-
-  const handleHistoryHandlePointerEnd = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const swipeState = historySwipeStateRef.current;
-    if (!swipeState.active || swipeState.pointerId !== event.pointerId) return;
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-
-    const shouldOpen = swipeState.currentOffset <= historyDrawerClosedOffset * HISTORY_EDGE_OPEN_RATIO;
-    setIsHistoryDrawerOpen(shouldOpen);
-    setHistoryDrawerDragOffset(null);
-
-    if (swipeState.moved) {
-      suppressHistoryHandleClickRef.current = true;
-    }
-
-    resetHistorySwipeState();
-  };
-
-  const restoreOrderFromHistory = async (entry: OrderHistoryEntry) => {
-    setHistoryError(null);
-    setRestoringOrderId(entry.orderId);
-
-    let latestStatus = entry.status;
-
-    const { data, error } = await supabase
-      .from("orders")
-      .select("status")
-      .eq("id", entry.orderId)
-      .maybeSingle();
-
-    if (error) {
-      setHistoryError("Could not refresh order status. Showing last saved details.");
-    } else if (data?.status) {
-      latestStatus = normalizeOrderStatus(data.status);
-    }
-
-    const hydratedEntry = latestStatus === entry.status
-      ? entry
-      : {
-          ...entry,
-          status: latestStatus
-        };
-
-    setOrderHistory((previousHistory) => upsertOrderHistory(previousHistory, hydratedEntry));
-    setSubmittedOrder({
-      orderId: hydratedEntry.orderId,
-      createdAt: hydratedEntry.createdAt,
-      lines: hydratedEntry.lines.map((line) => ({ ...line })),
-      totalPrice: hydratedEntry.totalPrice,
-      paymentMethod: hydratedEntry.paymentMethod,
-      gcashReference: hydratedEntry.gcashReference
-    });
-
-    setCurrentOrderId(hydratedEntry.orderId);
-    setPickupWindow(hydratedEntry.pickupWindow);
-    setOrderType(hydratedEntry.orderType);
-    setPaymentMethod(hydratedEntry.paymentMethod);
-    setGcashReference(hydratedEntry.gcashReference);
-    setCustomerName(hydratedEntry.customerName);
-    setSpecialInstructions(hydratedEntry.specialInstructions);
-    setCheckoutError(null);
-    setOrderStatus(hydratedEntry.status);
-    setOrderPlaced(true);
-    setCheckoutStep("tracking");
-    setShowReceipt(true);
-    setIsCartOpen(false);
-    setIsHistoryDrawerOpen(false);
-    setHistoryDrawerDragOffset(null);
-    setRestoringOrderId((currentId) => (currentId === entry.orderId ? null : currentId));
   };
 
   const handleReorderFromReceipt = () => {
@@ -970,8 +835,6 @@ export default function OrderPage() {
     setSubmittedOrder(null);
     setOrderStatus("received");
     setCheckoutError(null);
-    setIsHistoryDrawerOpen(false);
-    setHistoryDrawerDragOffset(null);
     setIsCartOpen(true);
     addToast("Items added back to cart.");
   };
@@ -991,9 +854,8 @@ export default function OrderPage() {
     setCustomerName("");
     setCustomerPhone("");
     setSpecialInstructions("");
-    setPickupWindow("in-10");
+    setPickupTime(pickupTimes[0] || "");
     setCheckoutError(null);
-    setHistoryError(null);
   };
 
   return (
@@ -1009,6 +871,162 @@ export default function OrderPage() {
               </button>
               <h2>Payment Details</h2>
             </header>
+
+            <div className="checkout-form-grid">
+              <fieldset className="checkout-choice-group">
+                <legend>Order Type</legend>
+                <div className="checkout-choice-list" role="radiogroup" aria-label="Order type">
+                  <label className={`checkout-choice ${orderType === "pickup" ? "checkout-choice-active" : ""}`}>
+                    <input
+                      type="radio"
+                      name="orderType"
+                      value="pickup"
+                      checked={orderType === "pickup"}
+                      onChange={() => setOrderType("pickup")}
+                    />
+                    Pick-up
+                  </label>
+                  <label className={`checkout-choice ${orderType === "delivery" ? "checkout-choice-active" : ""}`}>
+                    <input
+                      type="radio"
+                      name="orderType"
+                      value="delivery"
+                      checked={orderType === "delivery"}
+                      onChange={() => setOrderType("delivery")}
+                    />
+                    Delivery
+                  </label>
+                </div>
+              </fieldset>
+
+              {orderType === "delivery" ? (
+                <label className="checkout-field" htmlFor="deliveryAddressPayment">
+                  Delivery Address *
+                  <textarea
+                    id="deliveryAddressPayment"
+                    value={deliveryAddress}
+                    onChange={(event) => setDeliveryAddress(event.target.value)}
+                    placeholder="House number, street, barangay, city"
+                    rows={2}
+                    required
+                  />
+                </label>
+              ) : null}
+
+              <label className="checkout-field" htmlFor="customerNamePayment">
+                Customer Name *
+                <input
+                  id="customerNamePayment"
+                  type="text"
+                  value={customerName}
+                  onChange={(event) => setCustomerName(event.target.value)}
+                  placeholder="Enter your name"
+                  required
+                />
+              </label>
+              <label className="checkout-field" htmlFor="customerPhonePayment">
+                Contact Number *
+                <input
+                  id="customerPhonePayment"
+                  type="text"
+                  inputMode="tel"
+                  value={customerPhone}
+                  onChange={(event) => setCustomerPhone(event.target.value)}
+                  placeholder="09XXXXXXXXX"
+                  required
+                />
+              </label>
+              <label className="checkout-field" htmlFor="specialInstructionsPayment">
+                Special Instructions
+                <textarea
+                  id="specialInstructionsPayment"
+                  value={specialInstructions}
+                  onChange={(event) => setSpecialInstructions(event.target.value)}
+                  placeholder="Less sugar, no straw, etc."
+                  rows={2}
+                />
+              </label>
+
+              <fieldset className="checkout-choice-group">
+                <legend>Payment Method</legend>
+                <div className="checkout-choice-list" role="radiogroup" aria-label="Payment method">
+                  <label className={`checkout-choice ${paymentMethod === "cash" ? "checkout-choice-active" : ""}`}>
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value="cash"
+                      checked={paymentMethod === "cash"}
+                      onChange={() => setPaymentMethod("cash")}
+                    />
+                    Cash
+                  </label>
+                  <label className={`checkout-choice ${paymentMethod === "gcash" ? "checkout-choice-active" : ""}`}>
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value="gcash"
+                      checked={paymentMethod === "gcash"}
+                      onChange={() => setPaymentMethod("gcash")}
+                    />
+                    GCash
+                  </label>
+                </div>
+              </fieldset>
+            </div>
+
+            <section
+              className={`loyalty-banner loyalty-banner-in-payment ${user ? "loyalty-banner-success" : ""}`}
+              aria-live="polite"
+              aria-label="Loyalty rewards status"
+            >
+              <div className="loyalty-banner-icon" aria-hidden="true">
+                {user ? (
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
+                    <path
+                      d="m8 12 2.4 2.4L16.4 8.6"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M7 4.5h10v2.3H7z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                    <path d="M5.2 8.2h13.6v11.3H5.2z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                    <path d="M12 8.2v11.3M5.2 12h13.6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                  </svg>
+                )}
+              </div>
+
+              <div className="loyalty-banner-body">
+                {user ? (
+                  <>
+                    <p className="loyalty-banner-title">Logged in as {user.email || "your account"}. You will earn stamps for this order!</p>
+                    <button
+                      type="button"
+                      className="loyalty-banner-link"
+                      onClick={() => {
+                        void handleLogout();
+                      }}
+                    >
+                      Log out
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="loyalty-banner-title">Log in to earn stamps for your order</p>
+                    <div className="loyalty-banner-cta">
+                      <button type="button" className="loyalty-banner-link" onClick={() => setIsAuthModalOpen(true)}>
+                        Log in now
+                      </button>
+                      <span>Or continue as guest</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
 
             {paymentMethod === "cash" ? (
               <p className="order-payment-cash-copy">
@@ -1076,7 +1094,7 @@ export default function OrderPage() {
                 { label: "Clear Cart", variant: "ghost", onClick: clearCart }
               ]}
               cardContent={
-                <>
+                <div aria-busy={isMenuLoading || isHighlightsLoading}>
                   <h2 className="order-hero-card-title" style={{ marginTop: 0 }}>
                     Today Highlights
                   </h2>
@@ -1085,7 +1103,7 @@ export default function OrderPage() {
                   </p>
 
                   {isMenuLoading ? (
-                    <p className="order-highlight-meta">Loading live menu...</p>
+                    <HighlightListSkeleton />
                   ) : menuError ? (
                     <p className="order-highlight-meta" role="alert">{menuError}</p>
                   ) : (
@@ -1111,94 +1129,22 @@ export default function OrderPage() {
                   <p className="order-highlight-meta">
                     Cart now has {cartCount} item{cartCount === 1 ? "" : "s"}.
                   </p>
-                  {isHighlightsLoading ? <p className="order-highlight-meta">Loading today highlights...</p> : null}
-                </>
+                  {isHighlightsLoading ? (
+                    <SkeletonGroup className="order-highlight-meta">
+                      <Skeleton type="text" width="52%" />
+                    </SkeletonGroup>
+                  ) : null}
+                </div>
               }
             />
-
-            {orderHistory.length > 0 ? (
-              <aside
-                id="order-history-edge-drawer"
-                ref={historyDrawerRef}
-                className={`order-history-edge-drawer ${historyDrawerDragOffset !== null ? "order-history-edge-drawer-dragging" : ""}`}
-                style={{ transform: `translate3d(0, ${historyDrawerOffset}px, 0)` }}
-                aria-label="Recent order history"
-              >
-                <button
-                  ref={historyHandleRef}
-                  type="button"
-                  className={`order-history-edge-handle ${isHistoryDrawerOpen ? "order-history-edge-handle-open" : ""}`}
-                  aria-expanded={isHistoryDrawerOpen}
-                  aria-controls="order-history-edge-panel"
-                  onClick={handleHistoryDrawerToggle}
-                  onPointerDown={handleHistoryHandlePointerDown}
-                  onPointerMove={handleHistoryHandlePointerMove}
-                  onPointerUp={handleHistoryHandlePointerEnd}
-                  onPointerCancel={handleHistoryHandlePointerEnd}
-                >
-                  <span>{isHistoryDrawerOpen ? "Close" : "History"}</span>
-                </button>
-
-                <section id="order-history-edge-panel" className="order-history-edge-panel">
-                  <header className="order-history-head">
-                    <p className="order-kicker">Order History</p>
-                    <p>Swipe or tap the edge tab to open and close.</p>
-                  </header>
-
-                  <div className="order-history-body">
-                    {historyError ? (
-                      <p className="order-history-error" role="alert">
-                        {historyError}
-                      </p>
-                    ) : null}
-
-                    <div className="order-history-list" role="list">
-                      {orderHistory.map((entry) => {
-                        const isRestoring = restoringOrderId === entry.orderId;
-                        const createdAtLabel = new Date(entry.createdAt).toLocaleString("en-PH", {
-                          month: "short",
-                          day: "2-digit",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          timeZone: "Asia/Manila"
-                        });
-
-                        return (
-                          <article key={entry.orderId} className="order-history-card" role="listitem">
-                            <div className="order-history-main">
-                              <p className="order-history-id">Order {entry.orderId.slice(0, 8).toUpperCase()}</p>
-                              <p className="order-history-meta">
-                                {createdAtLabel} | {entry.orderType === "delivery" ? "Delivery" : "Pickup"} | {orderStatusLabel(entry.status)}
-                              </p>
-                              <p className="order-history-meta">
-                                {entry.customerName} | PHP {entry.totalPrice.toFixed(2)}
-                              </p>
-                            </div>
-
-                            <div className="order-history-actions">
-                              <button
-                                type="button"
-                                className="order-primary-btn"
-                                onClick={() => void restoreOrderFromHistory(entry)}
-                                disabled={isRestoring}
-                              >
-                                {isRestoring ? "Opening..." : "Open Receipt"}
-                              </button>
-                            </div>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </section>
-              </aside>
-            ) : null}
 
             <section className="order-main-grid order-main-grid-single" id="order-menu" aria-label="Order interface">
               <div>
                 <CategoryTabs activeCategory={activeCategory} onChange={setActiveCategory} />
                 {isMenuLoading ? (
-                  <p className="order-empty">Loading menu...</p>
+                  <div aria-busy="true">
+                    <MenuGridSkeleton />
+                  </div>
                 ) : menuError ? (
                   <p className="order-empty" role="alert">{menuError}</p>
                 ) : filteredItems.length === 0 ? (
@@ -1239,26 +1185,15 @@ export default function OrderPage() {
               serviceFee={serviceFee}
               grandTotal={grandTotal}
               isCheckingOut={isCheckingOut}
-              checkoutError={checkoutError}
-              orderType={orderType}
-              paymentMethod={paymentMethod}
-              deliveryAddress={deliveryAddress}
-              pickupWindow={pickupWindow}
-              customerName={customerName}
-              customerPhone={customerPhone}
-              specialInstructions={specialInstructions}
-              onOrderTypeChange={setOrderType}
-              onPaymentMethodChange={setPaymentMethod}
-              onDeliveryAddressChange={setDeliveryAddress}
-              onPickupWindowChange={setPickupWindow}
-              onCustomerNameChange={setCustomerName}
-              onCustomerPhoneChange={setCustomerPhone}
-              onSpecialInstructionsChange={setSpecialInstructions}
+              pickupTime={pickupTime}
+              pickupTimes={pickupTimes}
+              onPickupTimeChange={setPickupTime}
               onRemoveLine={removeLine}
               onClearOrder={clearCart}
               onClose={() => setIsCartOpen(false)}
               onCheckout={handleCheckout}
             />
+
           </>
         ) : showReceipt && submittedOrder ? (
           <ReceiptView
@@ -1266,6 +1201,8 @@ export default function OrderPage() {
             createdAt={submittedOrder.createdAt}
             lines={submittedOrder.lines}
             totalPrice={submittedOrder.totalPrice}
+            orderType={submittedOrder.orderType}
+            pickupTime={submittedOrder.pickupTime}
             paymentMethod={submittedOrder.paymentMethod}
             gcashReference={submittedOrder.gcashReference}
             onReorder={handleReorderFromReceipt}
@@ -1274,7 +1211,7 @@ export default function OrderPage() {
         ) : (
           <OrderTimeline
             orderNumber={orderNumber}
-            pickupLabel={pickupText(pickupWindow)}
+            pickupLabel={pickupTime || "As soon as possible"}
             orderStatus={orderStatus}
             customerName={customerName || "Guest"}
             specialInstructions={specialInstructions}
@@ -1282,6 +1219,14 @@ export default function OrderPage() {
             onReset={resetOrder}
           />
         )}
+
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          onClose={() => setIsAuthModalOpen(false)}
+          onAuthSuccess={() => {
+            void handleAuthSuccess();
+          }}
+        />
       </main>
 
       <div className="toast-stack" aria-live="polite" aria-label="Order notifications">
