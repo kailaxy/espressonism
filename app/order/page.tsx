@@ -2,18 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Hero,
   Navbar,
   AuthModal,
-  CategoryTabs,
-  MenuGrid,
   ModifierModal,
   CartModal,
   OrderTimeline,
-  ReceiptView,
-  Skeleton,
-  SkeletonGroup,
-  SkeletonPageSection
+  ReceiptView
 } from "../components";
 import {
   type CartLine,
@@ -23,7 +17,7 @@ import {
   type OrderType,
   type PaymentMethod
 } from "../components/Order";
-import { smoothScrollToElement } from "../lib/smoothScroll";
+import KioskOrderPage from "./KioskOrderPage";
 // @ts-ignore - Supabase client is intentionally authored in a JavaScript module.
 import { supabase } from "../../supabaseClient";
 
@@ -263,40 +257,6 @@ function notifyTelegramOrderPlaced(payload: {
   } catch (error) {
     console.error("Telegram notification failed.", error);
   }
-}
-
-function HighlightListSkeleton() {
-  return (
-    <SkeletonGroup className="order-highlight-list">
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div key={`highlight-skeleton-${index}`} className="order-highlight-item" role="presentation">
-          <span className="order-highlight-main">
-            <Skeleton type="text" width="62%" />
-            <Skeleton type="text" width="28%" />
-          </span>
-          <Skeleton type="text" className="order-highlight-add" width="3.5rem" />
-        </div>
-      ))}
-    </SkeletonGroup>
-  );
-}
-
-function MenuGridSkeleton() {
-  return (
-    <SkeletonGroup className="order-menu-grid-v2">
-      {Array.from({ length: 6 }).map((_, index) => (
-        <SkeletonPageSection
-          key={`menu-card-skeleton-${index}`}
-          className="order-menu-card-v2"
-          includeMedia
-          mediaHeight="12rem"
-          titleWidth="58%"
-          lineCount={4}
-          lineWidths={["38%", "100%", "84%", "52%"]}
-        />
-      ))}
-    </SkeletonGroup>
-  );
 }
 
 export default function OrderPage() {
@@ -858,11 +818,13 @@ export default function OrderPage() {
     setCheckoutError(null);
   };
 
+  const isKioskBrowseStage = !orderPlaced && checkoutStep !== "payment";
+
   return (
-    <div className="shell order-page-v2" id="home">
+    <div className={isKioskBrowseStage ? "order-page-v2 order-page-v2-browse" : "shell order-page-v2"} id="home">
       <Navbar cartCount={cartCount} onCartClick={openCartView} hrefPrefix="/" />
 
-      <main className="order-shell">
+      <main className={`order-shell ${isKioskBrowseStage ? "order-shell-kiosk" : ""}`}>
         {!orderPlaced ? checkoutStep === "payment" ? (
           <section className="order-timeline" aria-live="polite">
             <header className="order-payment-head">
@@ -1078,87 +1040,23 @@ export default function OrderPage() {
           </section>
         ) : (
           <>
-            <Hero
-              title="Order Flow."
-              subtitle="Connected Experience"
-              description="Same Espressonism story, now with instant pickup ordering. Select your drinks, choose your window, and keep moving."
-              actions={[
-                {
-                  label: "Jump to Menu",
-                  variant: "primary",
-                  onClick: () => {
-                    const section = document.getElementById("order-menu");
-                    if (section) smoothScrollToElement(section);
-                  }
-                },
-                { label: "Clear Cart", variant: "ghost", onClick: clearCart }
-              ]}
-              cardContent={
-                <div aria-busy={isMenuLoading || isHighlightsLoading}>
-                  <h2 className="order-hero-card-title" style={{ marginTop: 0 }}>
-                    Today Highlights
-                  </h2>
-                  <p className="order-hero-card-copy">
-                    Quick tap adds the default build. For custom size and milk, use Customize below.
-                  </p>
-
-                  {isMenuLoading ? (
-                    <HighlightListSkeleton />
-                  ) : menuError ? (
-                    <p className="order-highlight-meta" role="alert">{menuError}</p>
-                  ) : (
-                    <div className="order-highlight-list" role="list" aria-label="Quick add highlights">
-                      {highlightItems.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className="order-highlight-item"
-                          onClick={() => quickAddDefault(item)}
-                          role="listitem"
-                          aria-label={`Add ${item.name} to cart`}
-                        >
-                          <span className="order-highlight-main">
-                            <strong>{item.name}</strong>
-                            <span>PHP {item.price.toFixed(0)}</span>
-                          </span>
-                          <span className="order-highlight-add">Add +</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {isHighlightsLoading ? (
-                    <SkeletonGroup className="order-highlight-meta">
-                      <Skeleton type="text" width="52%" />
-                    </SkeletonGroup>
-                  ) : null}
-                </div>
-              }
+            <KioskOrderPage
+              activeCategory={activeCategory}
+              onCategoryChange={setActiveCategory}
+              items={filteredItems}
+              cartLines={cartLines}
+              highlightItems={highlightItems}
+              quantities={quantities}
+              isMenuLoading={isMenuLoading}
+              isHighlightsLoading={isHighlightsLoading}
+              menuError={menuError}
+              cartCount={cartCount}
+              grandTotal={grandTotal}
+              isCartBumping={isCartBumping}
+              onQuickAdd={quickAddDefault}
+              onCustomize={openModifier}
+              onViewCart={openCartView}
             />
-
-            <section className="order-main-grid order-main-grid-single" id="order-menu" aria-label="Order interface">
-              <div>
-                <CategoryTabs activeCategory={activeCategory} onChange={setActiveCategory} />
-                {isMenuLoading ? (
-                  <div aria-busy="true">
-                    <MenuGridSkeleton />
-                  </div>
-                ) : menuError ? (
-                  <p className="order-empty" role="alert">{menuError}</p>
-                ) : filteredItems.length === 0 ? (
-                  <p className="order-empty">No menu items found for this category.</p>
-                ) : (
-                  <MenuGrid items={filteredItems} quantities={quantities} onSelectItem={openModifier} />
-                )}
-              </div>
-            </section>
-
-            <button
-              type="button"
-              className={`view-cart-fab ${isCartBumping ? "view-cart-fab-bump" : ""}`}
-              onClick={openCartView}
-            >
-              View Cart ({cartCount})
-            </button>
 
             <ModifierModal
               isOpen={isModifierOpen}

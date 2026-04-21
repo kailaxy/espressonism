@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Script from "next/script";
-import { GoogleReviews } from "./GoogleReviews";
-import { Skeleton, SkeletonGroup } from "./UI";
+import { GoogleReviews, GoogleReviewsSkeleton } from "./GoogleReviews";
 
 const ELFSIGHT_APP_CLASS = "elfsight-app-63d5cbb8-6257-4ed0-bbd3-e4492e650627";
 const FALLBACK_CHECK_DELAY_MS = 3500;
@@ -56,26 +55,7 @@ export function ReviewsWrapper() {
   return (
     <>
       {isResolvingSource && (
-        <div className="google-reviews" aria-live="polite" aria-busy="true">
-          <div className="google-reviews-list" role="list">
-            {Array.from({ length: 3 }).map((_, index) => (
-              <article className="google-review-card" role="listitem" key={`wrapper-skeleton-${index}`}>
-                <SkeletonGroup>
-                  <header className="google-review-head">
-                    <Skeleton type="block" className="google-review-avatar" width={40} height={40} />
-                    <div style={{ width: "100%" }}>
-                      <Skeleton width="50%" />
-                      <Skeleton width="35%" />
-                    </div>
-                  </header>
-                  <Skeleton width="100%" />
-                  <Skeleton width="85%" />
-                  <Skeleton width="65%" />
-                </SkeletonGroup>
-              </article>
-            ))}
-          </div>
-        </div>
+        <GoogleReviewsSkeleton />
       )}
 
       <div

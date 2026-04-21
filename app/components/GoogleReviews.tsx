@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Skeleton, SkeletonGroup } from "./UI";
+import { Skeleton, SkeletonGroup, SkeletonListRow } from "./UI";
 
 type GoogleReview = {
   author_name?: string;
@@ -30,6 +30,29 @@ function renderStars(rating: number): string {
   const filled = "⭐".repeat(rating);
   const empty = "☆".repeat(5 - rating);
   return `${filled}${empty}`;
+}
+
+interface GoogleReviewsSkeletonProps {
+  count?: number;
+}
+
+export function GoogleReviewsSkeleton({ count = 3 }: GoogleReviewsSkeletonProps) {
+  return (
+    <div className="google-reviews" aria-live="polite" aria-busy="true" aria-label="Loading guest reviews">
+      <div className="google-reviews-list" role="list">
+        {Array.from({ length: count }).map((_, index) => (
+          <article className="google-review-card" role="listitem" key={`loading-skeleton-${index}`}>
+            <SkeletonGroup>
+              <SkeletonListRow withAvatar />
+              <Skeleton width="100%" />
+              <Skeleton width="85%" />
+              <Skeleton width="65%" />
+            </SkeletonGroup>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function GoogleReviews() {
@@ -76,28 +99,7 @@ export function GoogleReviews() {
   const hasReviews = useMemo(() => reviews.length > 0, [reviews]);
 
   if (isLoading) {
-    return (
-      <div className="google-reviews" aria-live="polite" aria-busy="true">
-        <div className="google-reviews-list" role="list">
-          {Array.from({ length: 3 }).map((_, index) => (
-            <article className="google-review-card" role="listitem" key={`loading-skeleton-${index}`}>
-              <SkeletonGroup>
-                <header className="google-review-head">
-                  <Skeleton type="block" className="google-review-avatar" width={40} height={40} />
-                  <div style={{ width: "100%" }}>
-                    <Skeleton width="50%" />
-                    <Skeleton width="35%" />
-                  </div>
-                </header>
-                <Skeleton width="100%" />
-                <Skeleton width="85%" />
-                <Skeleton width="65%" />
-              </SkeletonGroup>
-            </article>
-          ))}
-        </div>
-      </div>
-    );
+    return <GoogleReviewsSkeleton />;
   }
 
   if (!hasReviews) {

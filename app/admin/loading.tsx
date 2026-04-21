@@ -1,28 +1,43 @@
-import { Skeleton, SkeletonFormBlock, SkeletonPageSection, SkeletonTableRow } from "../components";
+import { Skeleton, SkeletonPageSection } from "../components";
 
 export default function Loading() {
   return (
     <main className="barista-dashboard" aria-busy="true" aria-live="polite">
       <header className="barista-dashboard-header">
-        <div className="barista-dashboard-header-top">
-          <Skeleton type="text" width="7.5rem" />
-          <Skeleton type="block" width="5rem" height="2.15rem" />
+        <div className="barista-dashboard-header-main">
+          <div className="barista-dashboard-header-top">
+            <Skeleton type="text" width="8rem" />
+          </div>
+          <Skeleton type="text" width="15rem" height="2.4rem" />
+          <Skeleton type="text" width="26rem" />
         </div>
-        <Skeleton type="text" width="16rem" height="2.4rem" />
-        <Skeleton type="text" width="26rem" />
+
+        <div className="barista-dashboard-actions" aria-label="Dashboard controls loading state">
+          <nav className="barista-tab-nav barista-tab-nav-desktop" aria-label="Dashboard sections loading state">
+            <Skeleton type="block" width="7.25rem" height="2.4rem" />
+            <Skeleton type="block" width="7.75rem" height="2.4rem" />
+            <Skeleton type="block" width="8.2rem" height="2.4rem" />
+            <Skeleton type="block" width="7.5rem" height="2.4rem" />
+            <Skeleton type="block" width="6.75rem" height="2.4rem" />
+            <Skeleton type="block" width="6.5rem" height="2.4rem" />
+          </nav>
+
+          <div className="barista-mobile-tab-menu" aria-hidden="true">
+            <Skeleton type="block" width="7.5rem" height="2.4rem" />
+          </div>
+
+          <Skeleton type="block" width="6rem" height="2.4rem" />
+        </div>
       </header>
 
-      <nav className="barista-tab-nav" aria-label="Dashboard sections loading state">
-        <Skeleton type="block" width="7rem" height="2.4rem" />
-        <Skeleton type="block" width="7rem" height="2.4rem" />
-        <Skeleton type="block" width="8rem" height="2.4rem" />
-        <Skeleton type="block" width="8rem" height="2.4rem" />
-        <Skeleton type="block" width="7rem" height="2.4rem" />
-        <Skeleton type="block" width="6.5rem" height="2.4rem" />
-      </nav>
-
       <section className="barista-tab-content">
-        <section className="barista-orders-panel" aria-label="Loading active order board">
+        <section className="barista-orders-panel" aria-label="Loading live orders board">
+          <div className="barista-lane-cycler" aria-label="Loading mobile lane controls" aria-busy="true">
+            <Skeleton type="block" width="11rem" height="2.4rem" />
+            <Skeleton type="block" width="11rem" height="2.4rem" />
+            <Skeleton type="block" width="11rem" height="2.4rem" />
+          </div>
+
           <section className="barista-grid" aria-busy="true">
             <article className="barista-column board-preparing">
               <header className="barista-column-header">
@@ -99,17 +114,6 @@ export default function Loading() {
               </div>
             </article>
           </section>
-
-          <div className="barista-menu-table-wrap" style={{ marginTop: "1rem" }}>
-            <SkeletonPageSection titleWidth="36%" lineCount={2} lineWidths={["52%", "70%"]} />
-            {Array.from({ length: 3 }).map((_, index) => (
-              <SkeletonTableRow key={`admin-table-loading-${index}`} columns={6} columnWidths={["18%", "14%", "30%", "12%", "14%", "12%"]} />
-            ))}
-          </div>
-
-          <div className="barista-manager-form barista-manager-form-stretch" style={{ marginTop: "1rem" }}>
-            <SkeletonFormBlock fields={4} />
-          </div>
         </section>
       </section>
     </main>

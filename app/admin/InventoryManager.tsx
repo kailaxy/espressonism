@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Skeleton, SkeletonPageSection, SkeletonTableRow } from "../components/UI";
 // @ts-ignore - Supabase client is intentionally authored in a JavaScript module.
 import { supabase } from "../../supabaseClient";
 
@@ -305,7 +306,18 @@ export default function InventoryManager() {
         </header>
 
           {ingredientsError && <p className="barista-state barista-state-error">{ingredientsError}</p>}
-          {ingredientsLoading && <p className="barista-state">Loading ingredients...</p>}
+            {ingredientsLoading ? (
+              <div className="barista-menu-table-wrap" aria-label="Loading ingredients table" aria-busy="true">
+                <SkeletonPageSection titleWidth="40%" lineCount={1} lineWidths={["56%"]} />
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <SkeletonTableRow
+                    key={`inventory-ingredient-skeleton-${index}`}
+                    columns={3}
+                    columnWidths={["36%", "22%", "26%"]}
+                  />
+                ))}
+              </div>
+            ) : null}
 
           {!ingredientsLoading && !ingredientsError && ingredients.length === 0 && (
             <p className="barista-empty">No ingredients yet. Add your first ingredient to begin.</p>
@@ -342,7 +354,18 @@ export default function InventoryManager() {
           </header>
           
           {menuItemsError && <p className="barista-state barista-state-error">{menuItemsError}</p>}
-          {menuItemsLoading && <p className="barista-state">Loading menu items...</p>}
+            {menuItemsLoading ? (
+              <div className="inventory-accordion-list" aria-label="Loading menu item recipes" aria-busy="true">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div key={`inventory-menu-item-skeleton-${index}`} className="inventory-accordion-card" aria-hidden="true">
+                    <div className="inventory-accordion-trigger">
+                      <Skeleton type="text" width="62%" />
+                      <Skeleton type="text" width="1.25rem" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
           {!menuItemsLoading && !menuItemsError && menuItems.length === 0 && (
             <p className="barista-empty">No menu items found. Add menu items first to build recipes.</p>
@@ -368,7 +391,18 @@ export default function InventoryManager() {
                     {isExpanded && (
                       <div className="inventory-accordion-content">
                         {recipeError && <p className="barista-state barista-state-error">{recipeError}</p>}
-                        {recipeLoading && <p className="barista-state">Loading recipe ingredients...</p>}
+                        {recipeLoading ? (
+                          <div className="barista-menu-table-wrap" aria-label="Loading recipe ingredients table" aria-busy="true">
+                            <SkeletonPageSection titleWidth="44%" lineCount={1} lineWidths={["54%"]} />
+                            {Array.from({ length: 3 }).map((_, index) => (
+                              <SkeletonTableRow
+                                key={`inventory-recipe-skeleton-${index}`}
+                                columns={3}
+                                columnWidths={["42%", "28%", "18%"]}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
                         
                         {!recipeLoading && recipeRows.length === 0 && (
                           <p className="barista-empty">No recipe ingredients linked yet for this menu item.</p>

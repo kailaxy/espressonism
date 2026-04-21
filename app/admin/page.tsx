@@ -1,7 +1,7 @@
 "use client";
 
 import NextImage from "next/image";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Skeleton,
   SkeletonFormBlock,
@@ -154,11 +154,6 @@ const TODAY_HIGHLIGHT_SELECT_FIELDS = "id, menu_item_id, created_at";
 const TODAY_AT_BAR_SELECT_FIELDS =
   "id, title, description, dose, extraction_time, brew_temp, guest_score, carousel_enabled, carousel_autoplay, carousel_interval_ms, carousel_slides";
 const ADMIN_AUTH_STORAGE_KEY = "espressonism-admin-auth-session-v1";
-const MAX_MENU_IMAGE_UPLOAD_BYTES = 1.5 * 1024 * 1024;
-const MENU_IMAGE_CROP_PREVIEW_SIZE = 280;
-const MENU_IMAGE_CROP_OUTPUT_SIZE = 640;
-const MENU_IMAGE_ZOOM_MIN = 1;
-const MENU_IMAGE_ZOOM_MAX = 3;
 const TODAY_AT_BAR_CAROUSEL_INTERVAL_MIN = 2200;
 const TODAY_AT_BAR_CAROUSEL_INTERVAL_MAX = 15000;
 const TODAY_AT_BAR_CAROUSEL_INTERVAL_DEFAULT = 5500;
@@ -661,122 +656,8 @@ function upsertAndFilterCompletedOrders(
   return sortByCreatedAt(mergedOrders.filter((order) => isOrderWithinDateRange(order, range)));
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (typeof reader.result !== "string") {
-        reject(new Error("Unable to process uploaded image."));
-        return;
-      }
-
-      resolve(reader.result);
-    };
-
-    reader.onerror = () => {
-      reject(new Error("Unable to process uploaded image."));
-    };
-
-    reader.readAsDataURL(file);
-  });
-}
-
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-function isHttpSourceUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
-
-function isCanvasSecurityError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "SecurityError") {
-    return true;
-  }
-
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  const normalizedMessage = message.toLowerCase();
-  return normalizedMessage.includes("security") || normalizedMessage.includes("tainted");
-}
-
-function getMenuImageCropFallbackMessage(): string {
-  return "This image host blocks browser crop export. Upload the image file from your device, then crop and save again.";
-}
-
-function loadImageElement(sourceUrl: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-
-    if (isHttpSourceUrl(sourceUrl)) {
-      image.crossOrigin = "anonymous";
-    }
-
-    image.onload = () => {
-      resolve(image);
-    };
-
-    image.onerror = () => {
-      reject(new Error("Unable to load image."));
-    };
-
-    image.src = sourceUrl;
-  });
-}
-
-function drawSquareCroppedImage(
-  context: CanvasRenderingContext2D,
-  image: HTMLImageElement,
-  squareSize: number,
-  zoom: number,
-  horizontalPanPercent: number,
-  verticalPanPercent: number
-) {
-  const naturalWidth = image.naturalWidth || image.width;
-  const naturalHeight = image.naturalHeight || image.height;
-
-  if (!naturalWidth || !naturalHeight) {
-    throw new Error("Unable to read image dimensions.");
-  }
-
-  const safeZoom = clampNumber(zoom, MENU_IMAGE_ZOOM_MIN, MENU_IMAGE_ZOOM_MAX);
-  const coverScale = Math.max(squareSize / naturalWidth, squareSize / naturalHeight) * safeZoom;
-  const drawWidth = naturalWidth * coverScale;
-  const drawHeight = naturalHeight * coverScale;
-
-  const maxOffsetX = Math.max(0, (drawWidth - squareSize) / 2);
-  const maxOffsetY = Math.max(0, (drawHeight - squareSize) / 2);
-
-  const offsetX = clampNumber(horizontalPanPercent, -100, 100) / 100 * maxOffsetX;
-  const offsetY = clampNumber(verticalPanPercent, -100, 100) / 100 * maxOffsetY;
-
-  const drawX = (squareSize - drawWidth) / 2 + offsetX;
-  const drawY = (squareSize - drawHeight) / 2 + offsetY;
-
-  context.clearRect(0, 0, squareSize, squareSize);
-  context.fillStyle = "#1f1209";
-  context.fillRect(0, 0, squareSize, squareSize);
-  context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
-}
-
-function createSquareCroppedDataUrl(
-  image: HTMLImageElement,
-  zoom: number,
-  horizontalPanPercent: number,
-  verticalPanPercent: number,
-  outputSize: number
-): string {
-  const canvas = document.createElement("canvas");
-  canvas.width = outputSize;
-  canvas.height = outputSize;
-
-  const context = canvas.getContext("2d");
-  if (!context) {
-    throw new Error("Unable to prepare cropped image.");
-  }
-
-  drawSquareCroppedImage(context, image, outputSize, zoom, horizontalPanPercent, verticalPanPercent);
-  return canvas.toDataURL("image/jpeg", 0.92);
 }
 
 export default function AdminDashboardPage() {
@@ -812,15 +693,12 @@ export default function AdminDashboardPage() {
   const [isSavingMenuItem, setIsSavingMenuItem] = useState(false);
   const [updatingMenuImageId, setUpdatingMenuImageId] = useState<string | null>(null);
   const [activeMenuImageItem, setActiveMenuImageItem] = useState<MenuManagerItem | null>(null);
-  const [isMenuImageEditorOpen, setIsMenuImageEditorOpen] = useState(false);
   const [menuImageDraftSource, setMenuImageDraftSource] = useState<string | null>(null);
-  const [menuImageElement, setMenuImageElement] = useState<HTMLImageElement | null>(null);
-  const [menuImageZoom, setMenuImageZoom] = useState<number>(MENU_IMAGE_ZOOM_MIN);
-  const [menuImagePanX, setMenuImagePanX] = useState(0);
-  const [menuImagePanY, setMenuImagePanY] = useState(0);
-  const [isProcessingMenuImageUpload, setIsProcessingMenuImageUpload] = useState(false);
+  const [isMenuImagePickerOpen, setIsMenuImagePickerOpen] = useState(false);
+  const [menuBucketImages, setMenuBucketImages] = useState<PromoBucketImageOption[]>([]);
+  const [isMenuBucketImagesLoading, setIsMenuBucketImagesLoading] = useState(false);
+  const [menuBucketImagesError, setMenuBucketImagesError] = useState<string | null>(null);
   const [deletingMenuItemId, setDeletingMenuItemId] = useState<string | null>(null);
-  const menuImageCropCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [todayHighlightRows, setTodayHighlightRows] = useState<TodayHighlightRow[]>([]);
   const [isHighlightsLoading, setIsHighlightsLoading] = useState(false);
@@ -914,6 +792,10 @@ export default function AdminDashboardPage() {
   const closePromoImagePicker = () => {
     setIsPromoImagePickerOpen(false);
     setActivePromoSlideId(null);
+  };
+
+  const closeMenuImagePicker = () => {
+    setIsMenuImagePickerOpen(false);
   };
 
   useEffect(() => {
@@ -1226,71 +1108,6 @@ export default function AdminDashboardPage() {
   }, [isAuthenticated, salesDateRange.endIso, salesDateRange.startIso]);
 
   useEffect(() => {
-    let isCancelled = false;
-
-    const hydrateImage = async () => {
-      if (!menuImageDraftSource) {
-        setMenuImageElement(null);
-        return;
-      }
-
-      try {
-        const loadedImage = await loadImageElement(menuImageDraftSource);
-        if (isCancelled) return;
-        setMenuImageElement(loadedImage);
-      } catch {
-        if (isCancelled) return;
-        setMenuImageElement(null);
-        setMenuError(getMenuImageCropFallbackMessage());
-      }
-    };
-
-    void hydrateImage();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [menuImageDraftSource]);
-
-  useEffect(() => {
-    if (!activeMenuImageItem || !isMenuImageEditorOpen) return;
-
-    const canvas = menuImageCropCanvasRef.current;
-    if (!canvas) return;
-
-    const context = canvas.getContext("2d");
-    if (!context) return;
-
-    context.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (!menuImageElement) {
-      context.fillStyle = "#20160f";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = "#f3dcae";
-      context.font = "700 14px 'DM Sans'";
-      context.textAlign = "center";
-      context.textBaseline = "middle";
-      context.fillText("Upload an image to start cropping", canvas.width / 2, canvas.height / 2);
-      return;
-    }
-
-    drawSquareCroppedImage(
-      context,
-      menuImageElement,
-      canvas.width,
-      menuImageZoom,
-      menuImagePanX,
-      menuImagePanY
-    );
-  }, [activeMenuImageItem, isMenuImageEditorOpen, menuImageElement, menuImageZoom, menuImagePanX, menuImagePanY]);
-
-  const resetMenuImageCrop = () => {
-    setMenuImageZoom(MENU_IMAGE_ZOOM_MIN);
-    setMenuImagePanX(0);
-    setMenuImagePanY(0);
-  };
-
-  useEffect(() => {
     if (!isAuthenticated) return;
 
     let isMounted = true;
@@ -1524,13 +1341,11 @@ export default function AdminDashboardPage() {
     setMenuForm(EMPTY_MENU_FORM);
     setUpdatingMenuImageId(null);
     setActiveMenuImageItem(null);
-    setIsMenuImageEditorOpen(false);
     setMenuImageDraftSource(null);
-    setMenuImageElement(null);
-    setMenuImageZoom(MENU_IMAGE_ZOOM_MIN);
-    setMenuImagePanX(0);
-    setMenuImagePanY(0);
-    setIsProcessingMenuImageUpload(false);
+    setIsMenuImagePickerOpen(false);
+    setMenuBucketImages([]);
+    setMenuBucketImagesError(null);
+    setIsMenuBucketImagesLoading(false);
     setDeletingMenuItemId(null);
     setTodayHighlightRows([]);
     setHighlightsError(null);
@@ -1717,56 +1532,15 @@ export default function AdminDashboardPage() {
   const openMenuImageDialog = (menuItem: MenuManagerItem) => {
     setActiveMenuImageItem(menuItem);
     setMenuImageDraftSource(menuItem.image_url);
-    setMenuImageElement(null);
-    resetMenuImageCrop();
-    setIsMenuImageEditorOpen(false);
-    setIsProcessingMenuImageUpload(false);
+    setIsMenuImagePickerOpen(false);
+    setMenuBucketImagesError(null);
     setMenuError(null);
   };
 
   const closeMenuImageDialog = () => {
     setActiveMenuImageItem(null);
     setMenuImageDraftSource(null);
-    setMenuImageElement(null);
-    resetMenuImageCrop();
-    setIsMenuImageEditorOpen(false);
-    setIsProcessingMenuImageUpload(false);
-  };
-
-  const handleStartMenuImageEdit = () => {
-    setIsMenuImageEditorOpen(true);
-    resetMenuImageCrop();
-  };
-
-  const handleMenuImageEditorUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null;
-    event.target.value = "";
-
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      setMenuError("Please upload a valid image file.");
-      return;
-    }
-
-    if (file.size > MAX_MENU_IMAGE_UPLOAD_BYTES) {
-      setMenuError("Image must be 1.5MB or smaller.");
-      return;
-    }
-
-    setIsProcessingMenuImageUpload(true);
-    setMenuError(null);
-
-    try {
-      const uploadedImageSource = await readFileAsDataUrl(file);
-      setMenuImageDraftSource(uploadedImageSource);
-      setIsMenuImageEditorOpen(true);
-      resetMenuImageCrop();
-    } catch {
-      setMenuError("Unable to process uploaded image.");
-    } finally {
-      setIsProcessingMenuImageUpload(false);
-    }
+    setIsMenuImagePickerOpen(false);
   };
 
   const updateMenuItemImage = async (
@@ -1806,40 +1580,6 @@ export default function AdminDashboardPage() {
     return updatedMenuItem;
   };
 
-  const handleSaveCroppedMenuImage = async () => {
-    if (!activeMenuImageItem || !menuImageElement || updatingMenuImageId || isProcessingMenuImageUpload) return;
-
-    try {
-      const croppedImageDataUrl = createSquareCroppedDataUrl(
-        menuImageElement,
-        menuImageZoom,
-        menuImagePanX,
-        menuImagePanY,
-        MENU_IMAGE_CROP_OUTPUT_SIZE
-      );
-
-      const updatedMenuItem = await updateMenuItemImage(
-        activeMenuImageItem,
-        croppedImageDataUrl,
-        `Image updated for ${activeMenuImageItem.name}.`
-      );
-
-      if (!updatedMenuItem) return;
-
-      setActiveMenuImageItem(updatedMenuItem);
-      setMenuImageDraftSource(updatedMenuItem.image_url);
-      setIsMenuImageEditorOpen(false);
-      resetMenuImageCrop();
-    } catch (error) {
-      if (isCanvasSecurityError(error)) {
-        setMenuError(getMenuImageCropFallbackMessage());
-        return;
-      }
-
-      setMenuError("Unable to apply image crop.");
-    }
-  };
-
   const removeMenuItemImage = async (menuItem: MenuManagerItem) => {
     const updatedMenuItem = await updateMenuItemImage(
       menuItem,
@@ -1853,9 +1593,7 @@ export default function AdminDashboardPage() {
       setActiveMenuImageItem(updatedMenuItem);
     }
     setMenuImageDraftSource(null);
-    setMenuImageElement(null);
-    setIsMenuImageEditorOpen(false);
-    resetMenuImageCrop();
+    setIsMenuImagePickerOpen(false);
   };
 
   const handleRemoveActiveMenuImage = () => {
@@ -2076,6 +1814,123 @@ export default function AdminDashboardPage() {
     setIsPromoBucketImagesLoading(false);
   };
 
+  const loadMenuBucketImages = async () => {
+    if (!PROMO_IMAGE_BUCKET_NAME) {
+      setMenuBucketImages([]);
+      setMenuBucketImagesError(
+        "Missing NEXT_PUBLIC_PROMO_IMAGE_BUCKET_NAME. Configure this env var to enable bucket image picker."
+      );
+      return;
+    }
+
+    setIsMenuBucketImagesLoading(true);
+    setMenuBucketImagesError(null);
+
+    const normalizedPrefix = normalizePromoStoragePath(PROMO_IMAGE_BUCKET_PREFIX);
+    const queue = [normalizedPrefix];
+    const visitedFolders = new Set<string>();
+    const seenFilePaths = new Set<string>();
+    const collectedOptions: PromoBucketImageOption[] = [];
+
+    while (queue.length > 0) {
+      const currentFolder = normalizePromoStoragePath(queue.shift() ?? "");
+      if (visitedFolders.has(currentFolder)) {
+        continue;
+      }
+
+      visitedFolders.add(currentFolder);
+      let offset = 0;
+
+      while (true) {
+        const { data, error } = await supabase.storage
+          .from(PROMO_IMAGE_BUCKET_NAME)
+          .list(currentFolder, {
+            limit: 100,
+            offset,
+            sortBy: { column: "name", order: "asc" }
+          });
+
+        if (error) {
+          setMenuBucketImages([]);
+          setMenuBucketImagesError(error.message || "Unable to load images from Supabase Storage.");
+          setIsMenuBucketImagesLoading(false);
+          return;
+        }
+
+        const entries = (data ?? []) as Record<string, unknown>[];
+
+        for (const entry of entries) {
+          const entryName = typeof entry.name === "string" ? entry.name.trim() : "";
+          if (!entryName || entryName === ".emptyFolderPlaceholder") continue;
+
+          const fullPath = getStorageEntryPath(currentFolder, entryName);
+          if (!fullPath) continue;
+
+          if (isPromoStorageFolder(entry)) {
+            queue.push(fullPath);
+            continue;
+          }
+
+          if (!isSupportedPromoImageFile(entryName)) {
+            continue;
+          }
+
+          if (seenFilePaths.has(fullPath)) {
+            continue;
+          }
+          seenFilePaths.add(fullPath);
+
+          const { data: publicUrlData } = supabase.storage
+            .from(PROMO_IMAGE_BUCKET_NAME)
+            .getPublicUrl(fullPath);
+
+          collectedOptions.push({
+            name: entryName,
+            path: fullPath,
+            publicUrl: publicUrlData.publicUrl,
+            updatedAt: typeof entry.updated_at === "string" ? entry.updated_at : null,
+            sizeInBytes:
+              typeof entry.metadata === "object" && entry.metadata !== null && typeof (entry.metadata as { size?: unknown }).size === "number"
+                ? ((entry.metadata as { size: number }).size ?? null)
+                : null
+          });
+        }
+
+        if (entries.length < 100) {
+          break;
+        }
+
+        offset += 100;
+      }
+    }
+
+    setMenuBucketImages(sortPromoBucketImages(collectedOptions));
+    setIsMenuBucketImagesLoading(false);
+  };
+
+  const openMenuImagePicker = () => {
+    if (!activeMenuImageItem) return;
+
+    setIsMenuImagePickerOpen(true);
+    void loadMenuBucketImages();
+  };
+
+  const handleSelectMenuBucketImage = async (publicUrl: string) => {
+    if (!activeMenuImageItem || updatingMenuImageId) return;
+
+    const updatedMenuItem = await updateMenuItemImage(
+      activeMenuImageItem,
+      publicUrl,
+      `Image updated for ${activeMenuImageItem.name}.`
+    );
+
+    if (!updatedMenuItem) return;
+
+    setActiveMenuImageItem(updatedMenuItem);
+    setMenuImageDraftSource(updatedMenuItem.image_url);
+    setIsMenuImagePickerOpen(false);
+  };
+
   const openPromoImagePicker = (slideId: string) => {
     setActivePromoSlideId(slideId);
     setIsPromoImagePickerOpen(true);
@@ -2280,7 +2135,6 @@ export default function AdminDashboardPage() {
   ];
 
   const isUpdatingActiveMenuImage = activeMenuImageItem ? updatingMenuImageId === activeMenuImageItem.id : false;
-  const isMenuImageDraftLoading = Boolean(menuImageDraftSource) && !menuImageElement;
 
   if (!isAuthenticated) {
     return (
@@ -2408,82 +2262,90 @@ export default function AdminDashboardPage() {
       {activeTab === "orders" ? (
         <section className="barista-orders-panel" aria-label="Live orders board">
           {isLoading ? (
-            <section className="barista-grid" aria-label="Loading active order board" aria-busy="true">
-              <article className="barista-column board-preparing">
-                <header className="barista-column-header">
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-                    <p>In progress</p>
-                    <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/></svg>
-                      PREPARING
-                    </h2>
+            <>
+              <div className="barista-lane-cycler" aria-label="Loading mobile lane controls" aria-busy="true">
+                <Skeleton type="block" width="11rem" height="2.4rem" />
+                <Skeleton type="block" width="11rem" height="2.4rem" />
+                <Skeleton type="block" width="11rem" height="2.4rem" />
+              </div>
+
+              <section className="barista-grid" aria-label="Loading active order board" aria-busy="true">
+                <article className="barista-column board-preparing">
+                  <header className="barista-column-header">
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                      <p>In progress</p>
+                      <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/></svg>
+                        PREPARING
+                      </h2>
+                    </div>
+                    <Skeleton type="text" width={28} />
+                  </header>
+
+                  <div className="barista-column-list">
+                    {Array.from({ length: 2 }).map((_, index) => (
+                      <SkeletonPageSection
+                        key={`orders-skeleton-preparing-${index}`}
+                        className="barista-order-card"
+                        titleWidth="48%"
+                        lineCount={5}
+                        lineWidths={["58%", "100%", "92%", "74%", "48%"]}
+                      />
+                    ))}
                   </div>
-                  <Skeleton type="text" width={28} />
-                </header>
+                </article>
 
-                <div className="barista-column-list">
-                  {Array.from({ length: 2 }).map((_, index) => (
-                    <SkeletonPageSection
-                      key={`orders-skeleton-preparing-${index}`}
-                      className="barista-order-card"
-                      titleWidth="48%"
-                      lineCount={5}
-                      lineWidths={["58%", "100%", "92%", "74%", "48%"]}
-                    />
-                  ))}
-                </div>
-              </article>
+                <article className="barista-column board-new">
+                  <header className="barista-column-header">
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                      <p>Just placed</p>
+                      <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+                        NEW ORDERS
+                      </h2>
+                    </div>
+                    <Skeleton type="text" width={28} />
+                  </header>
 
-              <article className="barista-column board-new">
-                <header className="barista-column-header">
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-                    <p>Just placed</p>
-                    <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
-                      NEW ORDERS
-                    </h2>
+                  <div className="barista-column-list">
+                    {Array.from({ length: 2 }).map((_, index) => (
+                      <SkeletonPageSection
+                        key={`orders-skeleton-received-${index}`}
+                        className="barista-order-card"
+                        titleWidth="48%"
+                        lineCount={5}
+                        lineWidths={["58%", "100%", "92%", "74%", "48%"]}
+                      />
+                    ))}
                   </div>
-                  <Skeleton type="text" width={28} />
-                </header>
+                </article>
 
-                <div className="barista-column-list">
-                  {Array.from({ length: 2 }).map((_, index) => (
-                    <SkeletonPageSection
-                      key={`orders-skeleton-received-${index}`}
-                      className="barista-order-card"
-                      titleWidth="48%"
-                      lineCount={5}
-                      lineWidths={["58%", "100%", "92%", "74%", "48%"]}
-                    />
-                  ))}
-                </div>
-              </article>
+                <article className="barista-column board-ready">
+                  <header className="barista-column-header">
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                      <p>Pickup / handoff</p>
+                      <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                        READY FOR PICKUP
+                      </h2>
+                    </div>
+                    <Skeleton type="text" width={28} />
+                  </header>
 
-              <article className="barista-column board-ready">
-                <header className="barista-column-header">
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-                    <p>Pickup / handoff</p>
-                    <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                      READY FOR PICKUP
-                    </h2>
+                  <div className="barista-column-list">
+                    {Array.from({ length: 2 }).map((_, index) => (
+                      <SkeletonPageSection
+                        key={`orders-skeleton-ready-${index}`}
+                        className="barista-order-card"
+                        titleWidth="48%"
+                        lineCount={5}
+                        lineWidths={["58%", "100%", "92%", "74%", "48%"]}
+                      />
+                    ))}
                   </div>
-                  <Skeleton type="text" width={28} />
-                </header>
-
-                <div className="barista-column-list">
-                  {Array.from({ length: 2 }).map((_, index) => (
-                    <SkeletonPageSection
-                      key={`orders-skeleton-ready-${index}`}
-                      className="barista-order-card"
-                      titleWidth="48%"
-                      lineCount={5}
-                      lineWidths={["58%", "100%", "92%", "74%", "48%"]}
-                    />
-                  ))}
-                </div>
-              </article>
-            </section>
+                </article>
+              </section>
+            </>
           ) : null}
           {fetchError ? <p className="barista-state barista-state-error">{fetchError}</p> : null}
           {actionError ? <p className="barista-state barista-state-error">{actionError}</p> : null}
@@ -3222,7 +3084,7 @@ export default function AdminDashboardPage() {
                 </label>
 
                 <p className="barista-image-helper barista-form-field-full">
-                  After adding a drink, open its Image button in the table to upload, crop, and save a square image.
+                  After adding a drink, open its Image button in the table to choose an image from Supabase bucket files.
                 </p>
               </div>
 
@@ -3376,135 +3238,167 @@ export default function AdminDashboardPage() {
               </button>
             </header>
 
-            {!isMenuImageEditorOpen ? (
-              <>
-                <div className="barista-image-modal-preview">
-                  {menuImageDraftSource ? (
-                    <NextImage
-                      src={menuImageDraftSource}
-                      alt={`${activeMenuImageItem.name} preview`}
-                      className="barista-image-modal-preview-image"
-                      width={640}
-                      height={640}
-                      sizes="(max-width: 760px) 100vw, 420px"
-                      unoptimized
-                    />
-                  ) : (
-                    <p className="barista-image-modal-empty">No image uploaded yet.</p>
-                  )}
-                </div>
+            <div className="barista-image-modal-preview">
+              {menuImageDraftSource ? (
+                <NextImage
+                  src={menuImageDraftSource}
+                  alt={`${activeMenuImageItem.name} preview`}
+                  className="barista-image-modal-preview-image"
+                  width={640}
+                  height={640}
+                  sizes="(max-width: 760px) 100vw, 420px"
+                  unoptimized
+                />
+              ) : (
+                <p className="barista-image-modal-empty">No image selected yet.</p>
+              )}
+            </div>
 
-                <div className="barista-image-modal-actions">
-                  <button type="button" className="barista-logout-btn" onClick={closeMenuImageDialog}>
-                    Close
-                  </button>
+            <p className="barista-image-helper barista-promo-picker-config">
+              Bucket: {PROMO_IMAGE_BUCKET_NAME || "Not configured"}
+              {PROMO_IMAGE_BUCKET_PREFIX ? ` / ${PROMO_IMAGE_BUCKET_PREFIX}` : ""}
+            </p>
 
-                  <button
-                    type="button"
-                    className="barista-menu-remove-image"
-                    onClick={handleRemoveActiveMenuImage}
-                    disabled={!activeMenuImageItem.image_url || isUpdatingActiveMenuImage}
-                  >
-                    Remove Image
-                  </button>
+            <div className="barista-image-modal-actions">
+              <button type="button" className="barista-logout-btn" onClick={closeMenuImageDialog}>
+                Close
+              </button>
 
-                  <button type="button" className="barista-action-btn barista-image-modal-action" onClick={handleStartMenuImageEdit}>
-                    Edit
-                  </button>
-                </div>
-              </>
-            ) : isProcessingMenuImageUpload || isMenuImageDraftLoading ? (
-              <div className="barista-image-editor-wrap" aria-busy="true" aria-label="Processing menu image editor">
-                <SkeletonModalBody sections={1} />
+              <button
+                type="button"
+                className="barista-menu-remove-image"
+                onClick={handleRemoveActiveMenuImage}
+                disabled={!activeMenuImageItem.image_url || isUpdatingActiveMenuImage}
+              >
+                Remove Image
+              </button>
+
+              <button
+                type="button"
+                className="barista-action-btn barista-image-modal-action"
+                onClick={openMenuImagePicker}
+                disabled={isUpdatingActiveMenuImage}
+              >
+                Choose from Bucket
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isMenuImagePickerOpen ? (
+        <div className="barista-image-modal-backdrop" role="presentation" onClick={closeMenuImagePicker}>
+          <section
+            className="barista-image-modal barista-manager-modal barista-promo-picker-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="menuBucketPickerTitle"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="barista-image-modal-head">
+              <div>
+                <p className="barista-dashboard-kicker">Menu Item Image</p>
+                <h3 id="menuBucketPickerTitle">
+                  {activeMenuImageItem ? `Choose image for ${activeMenuImageItem.name}` : "Select Menu Image"}
+                </h3>
               </div>
-            ) : (
-              <div className="barista-image-editor-wrap">
-                <div className="barista-image-editor-canvas-wrap">
-                  <canvas
-                    ref={menuImageCropCanvasRef}
-                    width={MENU_IMAGE_CROP_PREVIEW_SIZE}
-                    height={MENU_IMAGE_CROP_PREVIEW_SIZE}
-                    className="barista-image-editor-canvas"
-                  />
+
+              <button
+                type="button"
+                className="barista-image-modal-close"
+                onClick={closeMenuImagePicker}
+                aria-label="Close menu image picker"
+              >
+                X
+              </button>
+            </header>
+
+            <p className="barista-image-helper barista-promo-picker-config">
+              Bucket: {PROMO_IMAGE_BUCKET_NAME || "Not configured"}
+              {PROMO_IMAGE_BUCKET_PREFIX ? ` / ${PROMO_IMAGE_BUCKET_PREFIX}` : ""}
+            </p>
+
+            <div className="barista-promo-picker-body" aria-live="polite">
+              {isMenuBucketImagesLoading ? (
+                <div className="barista-promo-picker-loading" aria-label="Loading bucket images" aria-busy="true">
+                  <SkeletonModalBody sections={2} />
                 </div>
-
-                <div className="barista-image-editor-controls">
-                  <label className="barista-form-field" htmlFor="menuImageZoom">
-                    Zoom ({menuImageZoom.toFixed(2)}x)
-                    <input
-                      id="menuImageZoom"
-                      type="range"
-                      min={MENU_IMAGE_ZOOM_MIN}
-                      max={MENU_IMAGE_ZOOM_MAX}
-                      step="0.01"
-                      value={menuImageZoom}
-                      onChange={(event) => setMenuImageZoom(Number(event.target.value))}
-                    />
-                  </label>
-
-                  <label className="barista-form-field" htmlFor="menuImagePanX">
-                    Move Left / Right ({Math.round(menuImagePanX)})
-                    <input
-                      id="menuImagePanX"
-                      type="range"
-                      min="-100"
-                      max="100"
-                      step="1"
-                      value={menuImagePanX}
-                      onChange={(event) => setMenuImagePanX(Number(event.target.value))}
-                    />
-                  </label>
-
-                  <label className="barista-form-field" htmlFor="menuImagePanY">
-                    Move Up / Down ({Math.round(menuImagePanY)})
-                    <input
-                      id="menuImagePanY"
-                      type="range"
-                      min="-100"
-                      max="100"
-                      step="1"
-                      value={menuImagePanY}
-                      onChange={(event) => setMenuImagePanY(Number(event.target.value))}
-                    />
-                  </label>
-                </div>
-
-                <div className="barista-image-editor-upload-row">
-                  <label
-                    className={`barista-upload-btn ${isProcessingMenuImageUpload ? "barista-upload-btn-disabled" : ""}`}
-                  >
-                    {isProcessingMenuImageUpload ? "Processing..." : "Upload Image"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(event) => {
-                        void handleMenuImageEditorUpload(event);
-                      }}
-                      disabled={isProcessingMenuImageUpload}
-                    />
-                  </label>
-
-                  <p>Final image uses a fixed square crop. Adjust zoom and position before saving.</p>
-                </div>
-
-                <div className="barista-image-modal-actions">
-                  <button type="button" className="barista-logout-btn" onClick={() => setIsMenuImageEditorOpen(false)}>
-                    Back
-                  </button>
-
+              ) : menuBucketImagesError ? (
+                <div className="barista-promo-picker-state">
+                  <p className="barista-state barista-state-error">{menuBucketImagesError}</p>
                   <button
                     type="button"
-                    className="barista-action-btn barista-image-modal-action"
+                    className="barista-logout-btn"
                     onClick={() => {
-                      void handleSaveCroppedMenuImage();
+                      void loadMenuBucketImages();
                     }}
-                    disabled={!menuImageElement || isProcessingMenuImageUpload || isUpdatingActiveMenuImage}
                   >
-                    {isUpdatingActiveMenuImage ? "Saving..." : "Save Cropped Image"}
+                    Retry
                   </button>
                 </div>
-              </div>
-            )}
+              ) : menuBucketImages.length === 0 ? (
+                <div className="barista-promo-picker-state">
+                  <p className="barista-empty">
+                    No image files found in this bucket/folder yet.
+                    {normalizePromoStoragePath(PROMO_IMAGE_BUCKET_PREFIX)
+                      ? ` Active prefix: ${normalizePromoStoragePath(PROMO_IMAGE_BUCKET_PREFIX)}`
+                      : " Active prefix: / (bucket root)"}
+                  </p>
+                </div>
+              ) : (
+                <div className="barista-promo-picker-grid" role="list" aria-label="Bucket image files">
+                  {menuBucketImages.map((option) => {
+                    const isSelected = activeMenuImageItem?.image_url?.trim() === option.publicUrl;
+
+                    return (
+                      <button
+                        key={option.path}
+                        type="button"
+                        className={`barista-promo-picker-item${isSelected ? " is-selected" : ""}`}
+                        onClick={() => {
+                          void handleSelectMenuBucketImage(option.publicUrl);
+                        }}
+                        aria-label={`Use ${option.name} for this menu item image`}
+                        role="listitem"
+                        disabled={isUpdatingActiveMenuImage}
+                      >
+                        <span
+                          className="barista-promo-picker-thumb"
+                          style={{ backgroundImage: `url(${option.publicUrl})` }}
+                          aria-hidden="true"
+                        />
+                        <span className="barista-promo-picker-copy">
+                          <strong>{option.name}</strong>
+                          <small>{option.path}</small>
+                          <small>
+                            {formatFileSize(option.sizeInBytes)}
+                            {option.updatedAt ? ` | ${new Date(option.updatedAt).toLocaleDateString("en-PH")}` : ""}
+                          </small>
+                          {isSelected ? <span className="barista-promo-picker-selected">Selected</span> : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="barista-image-modal-actions">
+              <button type="button" className="barista-logout-btn" onClick={closeMenuImagePicker}>
+                Back
+              </button>
+
+              <button
+                type="button"
+                className="barista-action-btn barista-image-modal-action"
+                onClick={() => {
+                  void loadMenuBucketImages();
+                }}
+                disabled={isMenuBucketImagesLoading}
+              >
+                {isMenuBucketImagesLoading ? "Refreshing..." : "Refresh List"}
+              </button>
+            </div>
           </section>
         </div>
       ) : null}

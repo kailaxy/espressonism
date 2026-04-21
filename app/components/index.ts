@@ -14,6 +14,7 @@ import {
 	SkeletonTableRow,
 	SkeletonFormBlock,
 	SkeletonModalBody,
+	SkeletonCard,
 } from "./UI";
 
 export { Navbar, Hero, Section, Gallery, Testimonials, LoyaltyCard, FeatureGrid, VisitSection, GoogleReviews, ReviewsWrapper, PromoBanner, AuthModal };
@@ -26,5 +27,6 @@ export {
 	SkeletonTableRow,
 	SkeletonFormBlock,
 	SkeletonModalBody,
+	SkeletonCard,
 };
 

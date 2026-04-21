@@ -1,59 +1,85 @@
-import { Skeleton, SkeletonGroup, SkeletonListRow, SkeletonPageSection } from "../components";
+import styles from "./KioskOrderPage.module.css";
+
+const CATEGORY_SKELETON_COUNT = 4;
+const HIGHLIGHT_SKELETON_COUNT = 4;
+const PRODUCT_SKELETON_COUNT = 8;
 
 export default function Loading() {
   return (
-    <div className="shell order-page-v2" aria-busy="true" aria-live="polite">
-      <main className="order-shell">
-        <section className="hero">
-          <div className="hero-copy">
-            <SkeletonGroup>
-              <Skeleton type="text" width="30%" height="0.95rem" />
-              <Skeleton type="text" width="58%" height="2.4rem" />
-              <Skeleton type="text" width="86%" />
-              <Skeleton type="text" width="74%" />
-            </SkeletonGroup>
+    <section className={styles.kioskWrapper} aria-label="Loading kiosk ordering interface" aria-busy="true" aria-live="polite">
+      <div className={styles.kioskMainRow}>
+        <aside className={styles.sidebar} aria-hidden="true">
+          <div className={`${styles.sidebarLabel} ${styles.skeletonShimmer} ${styles.sidebarLabelSkeleton}`} />
+          <div className={styles.categoryRail}>
+            {Array.from({ length: CATEGORY_SKELETON_COUNT }).map((_, index) => (
+              <div key={`category-skeleton-${index}`} className={`${styles.categoryButton} ${styles.categoryButtonSkeleton}`}>
+                <span className={`${styles.categoryIcon} ${styles.skeletonShimmer} ${styles.categoryIconSkeleton}`} />
+                <span className={`${styles.skeletonShimmer} ${styles.categoryTextSkeleton}`} />
+              </div>
+            ))}
           </div>
+        </aside>
 
-          <div className="hero-card">
-            <SkeletonGroup className="order-highlight-list">
-              <Skeleton type="text" width="44%" height="1.35rem" />
-              <Skeleton type="text" width="86%" />
-              {Array.from({ length: 4 }).map((_, index) => (
-                <SkeletonListRow key={`order-highlight-loading-${index}`} />
-              ))}
-            </SkeletonGroup>
-          </div>
-        </section>
-
-        <section className="order-main-grid order-main-grid-single" id="order-menu">
-          <div>
-            <div style={{ marginBottom: "0.9rem" }}>
-              <SkeletonGroup>
-                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  <Skeleton type="block" width="5.2rem" height="2.25rem" />
-                  <Skeleton type="block" width="6.1rem" height="2.25rem" />
-                  <Skeleton type="block" width="5.4rem" height="2.25rem" />
-                  <Skeleton type="block" width="4.5rem" height="2.25rem" />
-                </div>
-              </SkeletonGroup>
+        <section className={styles.catalogPane}>
+          <header className={styles.condensedHero}>
+            <div className={styles.heroHead}>
+              <div className={`${styles.skeletonShimmer} ${styles.heroHeadingSkeleton}`} />
+              <span className={`${styles.heroMeta} ${styles.skeletonShimmer} ${styles.heroMetaSkeleton}`} />
             </div>
 
-            <SkeletonGroup className="order-menu-grid-v2">
-              {Array.from({ length: 6 }).map((_, index) => (
-                <SkeletonPageSection
-                  key={`order-menu-loading-${index}`}
-                  className="order-menu-card-v2"
-                  includeMedia
-                  mediaHeight="12rem"
-                  titleWidth="58%"
-                  lineCount={4}
-                  lineWidths={["38%", "100%", "84%", "52%"]}
-                />
+            <div className={styles.heroCardRow}>
+              {Array.from({ length: HIGHLIGHT_SKELETON_COUNT }).map((_, index) => (
+                <article key={`highlight-skeleton-${index}`} className={`${styles.heroCard} ${styles.heroCardSkeleton}`} aria-hidden="true">
+                  <div>
+                    <div className={`${styles.skeletonShimmer} ${styles.heroTitleSkeleton}`} />
+                    <div className={`${styles.skeletonShimmer} ${styles.heroPriceSkeleton}`} />
+                  </div>
+                  <div className={`${styles.skeletonShimmer} ${styles.heroActionSkeleton}`} />
+                </article>
               ))}
-            </SkeletonGroup>
+            </div>
+          </header>
+
+          <div className={styles.desktopCartCta}>
+            <div className={`${styles.desktopViewCartFab} ${styles.skeletonShimmer} ${styles.desktopViewCartFabSkeleton}`} aria-hidden="true" />
+          </div>
+
+          <div className={styles.catalogScroll}>
+            <div className={styles.productGrid} role="status" aria-live="polite" aria-label="Loading menu items">
+              {Array.from({ length: PRODUCT_SKELETON_COUNT }).map((_, index) => (
+                <article key={`product-skeleton-${index}`} className={`${styles.productCard} ${styles.productCardSkeleton}`} aria-hidden="true">
+                  <div className={styles.productMedia}>
+                    <div className={`${styles.skeletonShimmer} ${styles.productMediaSkeleton}`} />
+                  </div>
+
+                  <div className={styles.productBody}>
+                    <div className={`${styles.skeletonShimmer} ${styles.productCategorySkeleton}`} />
+                    <div className={`${styles.skeletonShimmer} ${styles.productTitleSkeleton}`} />
+                    <div className={`${styles.skeletonShimmer} ${styles.productDescriptionSkeleton}`} />
+                    <div className={`${styles.skeletonShimmer} ${styles.productDescriptionSkeleton} ${styles.productDescriptionSkeletonShort}`} />
+                    <div className={`${styles.skeletonShimmer} ${styles.productPriceSkeleton}`} />
+                  </div>
+
+                  <div className={styles.productActions}>
+                    <div className={`${styles.skeletonShimmer} ${styles.actionSkeleton}`} />
+                    <div className={`${styles.skeletonShimmer} ${styles.actionSkeleton}`} />
+                  </div>
+
+                  <div className={`${styles.skeletonShimmer} ${styles.inCartPillSkeleton}`} />
+                </article>
+              ))}
+            </div>
           </div>
         </section>
-      </main>
-    </div>
+      </div>
+
+      <div className={styles.mobileTray} aria-hidden="true">
+        <div className={styles.mobileTraySkeletonCopy}>
+          <div className={`${styles.skeletonShimmer} ${styles.mobileTraySkeletonLine}`} />
+          <div className={`${styles.skeletonShimmer} ${styles.mobileTraySkeletonStrong}`} />
+        </div>
+        <div className={`${styles.skeletonShimmer} ${styles.mobileTraySkeletonButton}`} />
+      </div>
+    </section>
   );
 }

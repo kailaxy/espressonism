@@ -34,7 +34,7 @@ export interface SkeletonProps {
 }
 
 export function Skeleton({ className = "", type = "text", width, height }: SkeletonProps) {
-  const baseClass = type === "text" ? "skeleton skeleton-text" : "skeleton skeleton-block";
+  const baseClass = type === "media" ? "skeleton skeleton-media" : type === "text" ? "skeleton skeleton-text" : "skeleton skeleton-block";
   const inlineStyles: React.CSSProperties = { width, height };
 
   return <div className={`${baseClass} ${className}`} style={inlineStyles} aria-hidden="true" />;
@@ -42,7 +42,7 @@ export function Skeleton({ className = "", type = "text", width, height }: Skele
 
 export function SkeletonGroup({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`skeleton-group ${className}`} aria-hidden="true">
+    <div className={`skeleton-group ${className}`} role="status" aria-label="Loading" aria-live="polite">
       {children}
     </div>
   );
@@ -161,6 +161,27 @@ export function SkeletonModalBody({ className = "", sections = 2 }: SkeletonModa
       <div className="skeleton-modal-actions">
         <Skeleton type="block" className="skeleton-modal-action" height="2.75rem" />
         <Skeleton type="block" className="skeleton-modal-action" height="2.75rem" />
+      </div>
+    </SkeletonGroup>
+  );
+}
+
+export interface SkeletonCardProps {
+  className?: string;
+  includeMedia?: boolean;
+  mediaHeight?: string | number;
+  lines?: number;
+}
+
+export function SkeletonCard({ className = "", includeMedia = true, mediaHeight = "10rem", lines = 2 }: SkeletonCardProps) {
+  return (
+    <SkeletonGroup className={`skeleton-card ${className}`}>
+      {includeMedia && <Skeleton type="media" className="skeleton-card-media" height={mediaHeight} />}
+      <div className="skeleton-card-content">
+        <Skeleton type="text" className="skeleton-card-title" width="60%" />
+        {Array.from({ length: lines }).map((_, i) => (
+          <Skeleton key={`card-line-${i}`} type="text" className="skeleton-card-line" width={i === lines - 1 ? "80%" : "100%"} />
+        ))}
       </div>
     </SkeletonGroup>
   );

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
-import { AuthModal, Navbar } from "../components";
+import { AuthModal, Navbar, Skeleton, SkeletonGroup, SkeletonListRow } from "../components";
 // @ts-ignore - Supabase client is intentionally authored in a JavaScript module.
 import { supabase } from "../../supabaseClient";
 
@@ -310,8 +310,32 @@ export default function LoyaltyPage() {
         </section>
 
         {!authReady ? (
-          <section className="loyalty-page-panel">
-            <p className="loyalty-page-muted">Checking your session...</p>
+          <section className="loyalty-page-panel" aria-live="polite" aria-busy="true">
+            <div className="loyalty-experience loyalty-page-experience" aria-hidden="true">
+              <article className="loyalty-pass">
+                <SkeletonGroup>
+                  <Skeleton type="text" width="36%" height="0.95rem" />
+                  <Skeleton type="text" width="58%" height="1.45rem" />
+                  <Skeleton type="text" width="92%" />
+                  <div className="loyalty-stamp-grid loyalty-stamp-grid-five">
+                    {Array.from({ length: 5 }).map((_, index) => (
+                      <Skeleton key={`loyalty-session-stamp-loading-${index}`} type="block" height="3.75rem" />
+                    ))}
+                  </div>
+                  <Skeleton type="text" width="54%" />
+                </SkeletonGroup>
+              </article>
+
+              <aside className="loyalty-details loyalty-profile-sync">
+                <SkeletonGroup>
+                  <Skeleton type="text" width="46%" height="1.1rem" />
+                  <SkeletonListRow />
+                  <SkeletonListRow />
+                  <SkeletonListRow />
+                  <Skeleton type="block" width="100%" height="2.25rem" />
+                </SkeletonGroup>
+              </aside>
+            </div>
           </section>
         ) : null}
 
@@ -388,7 +412,32 @@ export default function LoyaltyPage() {
                 <p>These are your archived completed orders used for loyalty tracking.</p>
               </div>
 
-              {isDataLoading ? <p className="loyalty-page-muted">Loading order history...</p> : null}
+              {isDataLoading ? (
+                <ul className="loyalty-history-list" aria-label="Loading completed order history" aria-busy="true">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <li className="loyalty-history-item" key={`loyalty-history-loading-${index}`}>
+                      <div className="loyalty-history-summary" aria-hidden="true">
+                        <div className="loyalty-history-top">
+                          <div className="loyalty-history-main">
+                            <Skeleton type="text" width="8.2rem" />
+                            <Skeleton type="text" width="7.1rem" />
+                          </div>
+                          <Skeleton type="text" width="5.2rem" />
+                        </div>
+
+                        <div className="loyalty-history-summary-line">
+                          <Skeleton type="block" width="5.3rem" height="1.2rem" />
+                          <Skeleton type="block" width="4.7rem" height="1.2rem" />
+                          <Skeleton type="block" width="4.1rem" height="1.2rem" />
+                          <Skeleton type="block" width="6.6rem" height="1.2rem" />
+                        </div>
+
+                        <Skeleton type="text" width="6.8rem" />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
               {dataError ? <p className="loyalty-page-error">{dataError}</p> : null}
 
               {!isDataLoading && !dataError && orders.length === 0 ? (
