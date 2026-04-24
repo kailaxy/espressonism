@@ -4,14 +4,11 @@ import Image from "next/image";
 import styles from "./KioskOrderPage.module.css";
 import type { CartLine, MenuItem } from "../components/Order";
 
-type KioskCategory = "all" | MenuItem["category"];
-
 interface KioskOrderPageProps {
-  activeCategory: KioskCategory;
-  onCategoryChange: (category: KioskCategory) => void;
+  activeCategory: "all" | string;
+  onCategoryChange: (category: "all" | string) => void;
   items: MenuItem[];
   cartLines: CartLine[];
-  highlightItems: MenuItem[];
   quantities: Record<string, number>;
   isMenuLoading: boolean;
   isHighlightsLoading: boolean;
@@ -22,81 +19,79 @@ interface KioskOrderPageProps {
   onQuickAdd: (item: MenuItem) => void;
   onCustomize: (item: MenuItem) => void;
   onViewCart: () => void;
+  categories?: Array<{ key: string; label: string }>;
 }
 
 interface CategoryConfig {
-  id: KioskCategory;
+  id: string;
   label: string;
-  Icon: () => JSX.Element;
+  Icon?: () => JSX.Element;
 }
 
 function CategoryAllIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect x="4" y="4" width="6" height="6" rx="1.2" />
-      <rect x="14" y="4" width="6" height="6" rx="1.2" />
-      <rect x="4" y="14" width="6" height="6" rx="1.2" />
-      <rect x="14" y="14" width="6" height="6" rx="1.2" />
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="6" cy="6" r="2" fill="currentColor" />
+      <circle cx="12" cy="6" r="2" fill="currentColor" />
+      <circle cx="18" cy="6" r="2" fill="currentColor" />
+      <circle cx="6" cy="12" r="2" fill="currentColor" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" />
+      <circle cx="18" cy="12" r="2" fill="currentColor" />
+      <circle cx="6" cy="18" r="2" fill="currentColor" />
+      <circle cx="12" cy="18" r="2" fill="currentColor" />
+      <circle cx="18" cy="18" r="2" fill="currentColor" />
     </svg>
   );
 }
 
 function CategoryHotIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M5 9.5h10.5a2.5 2.5 0 0 1 0 5H14v.7a3.7 3.7 0 0 1-3.7 3.8H8.7A3.7 3.7 0 0 1 5 15.2V9.5Z" />
-      <path d="M8 5.2c.8.9.8 1.8 0 2.7M11 4.4c.8.9.8 1.8 0 2.7M14 5.2c.8.9.8 1.8 0 2.7" fill="none" />
-      <path d="M5 19h10" fill="none" />
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z" fill="currentColor" />
     </svg>
   );
 }
 
 function CategoryColdIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M9.2 4.5h5.6l-.6 2h2.5a1.4 1.4 0 0 1 1.4 1.6l-1.2 9.5a2.2 2.2 0 0 1-2.2 1.9H9.3a2.2 2.2 0 0 1-2.2-1.9L5.9 8.1a1.4 1.4 0 0 1 1.4-1.6h2.5l-.6-2Z" />
-      <path d="M9.4 11.8h5.2M10.2 14.4h3.6" fill="none" />
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z" fill="currentColor" />
     </svg>
   );
 }
 
 function CategoryPastryIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M3.8 15.3c2.1-6 6.5-9.2 13.2-9.7 2.6-.2 3.8 2.8 2 4.5-1.7 1.6-3.9 3.8-6.2 7.3H3.8Z" />
-      <path d="M8 12.2c1.7.2 3.4.7 4.8 1.6M10.3 9.9c1.4.2 2.8.6 4 1.2" fill="none" />
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M19 13h-8v8h8v-8zm0-2c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2h-5V1h-2v1h-5c-1.1 0-2 .9-2 2v5c0 1.1.9 2 2 2h5v1H7v2h5v1H7v2h12zM3 4h16v5H3V4z" fill="currentColor" />
     </svg>
   );
 }
 
-const CATEGORIES: CategoryConfig[] = [
-  { id: "all", label: "All", Icon: CategoryAllIcon },
-  { id: "espresso", label: "Hot", Icon: CategoryHotIcon },
-  { id: "signature", label: "Cold", Icon: CategoryColdIcon },
-  { id: "bites", label: "Pastries", Icon: CategoryPastryIcon }
-];
+function CategoryHighlightsIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="currentColor" />
+    </svg>
+  );
+}
 
-const HIGHLIGHT_SKELETON_COUNT = 4;
+const CATEGORY_ICONS: Record<string, () => JSX.Element> = {
+  all: CategoryAllIcon,
+  espresso: CategoryHotIcon,
+  signature: CategoryColdIcon,
+  bites: CategoryPastryIcon,
+  highlights: CategoryHighlightsIcon
+};
+
+function getCategoryIcon(key: string): (() => JSX.Element) {
+  return CATEGORY_ICONS[key] || (() => null);
+}
+
 const PRODUCT_SKELETON_COUNT = 8;
 
 function formatPeso(value: number): string {
   return `PHP ${value.toFixed(2)}`;
-}
-
-function KioskHighlightSkeletonCards() {
-  return (
-    <>
-      {Array.from({ length: HIGHLIGHT_SKELETON_COUNT }).map((_, index) => (
-        <article key={`highlight-skeleton-${index}`} className={`${styles.heroCard} ${styles.heroCardSkeleton}`} aria-hidden="true">
-          <div>
-            <div className={`${styles.skeletonShimmer} ${styles.heroTitleSkeleton}`} />
-            <div className={`${styles.skeletonShimmer} ${styles.heroPriceSkeleton}`} />
-          </div>
-          <div className={`${styles.skeletonShimmer} ${styles.heroActionSkeleton}`} />
-        </article>
-      ))}
-    </>
-  );
 }
 
 function KioskProductGridSkeleton({
@@ -138,7 +133,6 @@ export default function KioskOrderPage({
   activeCategory,
   onCategoryChange,
   items,
-  highlightItems,
   quantities,
   isMenuLoading,
   isHighlightsLoading,
@@ -148,16 +142,33 @@ export default function KioskOrderPage({
   isCartBumping,
   onQuickAdd,
   onCustomize,
-  onViewCart
+  onViewCart,
+  categories
 }: KioskOrderPageProps) {
+  // Build category list from props or use defaults
+  const categoryList: Array<{ key: string; label: string }> = categories && categories.length > 0
+    ? categories
+    : [
+        { key: "espresso", label: "Hot" },
+        { key: "signature", label: "Cold" },
+        { key: "bites", label: "Pastries" }
+      ];
+
+  // Prepend "All" and "Highlights" to the category list for UI
+  const displayCategories: CategoryConfig[] = [
+    { id: "all", label: "All" },
+    ...categoryList.map((cat) => ({ id: cat.key, label: cat.label })),
+    { id: "highlights", label: "Highlights" }
+  ];
   return (
     <section className={styles.kioskWrapper} aria-label="Kiosk ordering interface">
       <div className={styles.kioskMainRow}>
         <aside className={styles.sidebar} aria-label="Menu categories">
           <div className={styles.sidebarLabel}>Categories</div>
           <div className={styles.categoryRail} role="tablist" aria-orientation="vertical" aria-label="Browse categories">
-            {CATEGORIES.map((category) => {
+            {displayCategories.map((category) => {
               const isActive = category.id === activeCategory;
+              const Icon = getCategoryIcon(category.id);
 
               return (
                 <button
@@ -169,7 +180,7 @@ export default function KioskOrderPage({
                   onClick={() => onCategoryChange(category.id)}
                 >
                   <span className={styles.categoryIcon}>
-                    <category.Icon />
+                    <Icon />
                   </span>
                   <span className={styles.categoryText}>{category.label}</span>
                 </button>
@@ -179,28 +190,6 @@ export default function KioskOrderPage({
         </aside>
 
         <section className={styles.catalogPane} aria-live="polite">
-          <header className={styles.condensedHero}>
-            <div className={styles.heroHead}>
-              <h2>Today Highlights</h2>
-              {isHighlightsLoading ? <span className={`${styles.heroMeta} ${styles.skeletonShimmer} ${styles.heroMetaSkeleton}`} aria-hidden="true" /> : null}
-            </div>
-            <div className={styles.heroCardRow}>
-              {isHighlightsLoading
-                ? <KioskHighlightSkeletonCards />
-                : highlightItems.map((item) => (
-                  <article key={`highlight-${item.id}`} className={styles.heroCard}>
-                    <div>
-                      <h3>{item.name}</h3>
-                      <p>{formatPeso(item.price)}</p>
-                    </div>
-                    <button type="button" onClick={() => onQuickAdd(item)}>
-                      Add
-                    </button>
-                  </article>
-                ))}
-            </div>
-          </header>
-
           <div className={styles.desktopCartCta}>
             <button
               type="button"
@@ -212,7 +201,7 @@ export default function KioskOrderPage({
           </div>
 
           <div className={styles.catalogScroll}>
-            {isMenuLoading ? (
+            {isMenuLoading || (activeCategory === "highlights" && isHighlightsLoading) ? (
               <KioskProductGridSkeleton />
             ) : menuError ? (
               <div className={styles.statusBox} role="alert">{menuError}</div>

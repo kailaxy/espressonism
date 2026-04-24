@@ -2,29 +2,52 @@
 
 create extension if not exists "pgcrypto";
 
+-- Menu categories table - single source of truth for all category data
+create table if not exists public.menu_categories (
+  key text primary key,
+  label text not null,
+  sort_order integer not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- Seed initial categories
+insert into public.menu_categories (key, label, sort_order, active)
+values
+  ('espresso', 'Espresso', 1, true),
+  ('signature', 'Signature', 2, true),
+  ('bites', 'Bites', 3, true),
+  ('highlights', 'Highlights', 4, true)
+on conflict (key) do update
+set
+  label = excluded.label,
+  sort_order = excluded.sort_order,
+  active = excluded.active;
+
 create table if not exists public.menu_items (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
   description text not null default '',
   base_price numeric(10, 2) not null check (base_price >= 0),
   image_url text,
-  category text not null default 'signature' check (category in ('espresso', 'signature', 'bites'))
+  category text not null default 'signature' references public.menu_categories(key) on delete restrict
 );
 
 alter table public.menu_items
-  add column if not exists category text not null default 'signature';
+  add column if not exists category text not null default 'signature' references public.menu_categories(key) on delete restrict;
 
+-- Remove old hardcoded check constraint if it exists
 do $$
 begin
-  if not exists (
+  if exists (
     select 1
     from pg_constraint
     where conname = 'menu_items_category_check'
       and conrelid = 'public.menu_items'::regclass
   ) then
     alter table public.menu_items
-      add constraint menu_items_category_check
-      check (category in ('espresso', 'signature', 'bites'));
+      drop constraint menu_items_category_check;
   end if;
 end $$;
 

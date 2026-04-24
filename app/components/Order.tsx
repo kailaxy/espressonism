@@ -9,7 +9,7 @@ export interface MenuItem {
   name: string;
   price: number;
   description: string;
-  category: "espresso" | "signature" | "bites";
+  category: string;
   imageUrl?: string | null;
   note?: string;
 }
@@ -117,28 +117,31 @@ function useModalKeyboardAndFocusTrap<T extends HTMLElement>(isOpen: boolean, on
 }
 
 interface CategoryTabsProps {
-  activeCategory: "all" | MenuItem["category"];
-  onChange: (value: "all" | MenuItem["category"]) => void;
+  activeCategory: "all" | string;
+  onChange: (value: "all" | string) => void;
+  categories?: Array<{ key: string; label: string }>;
 }
 
-export function CategoryTabs({ activeCategory, onChange }: CategoryTabsProps) {
-  const tabs: Array<{ id: "all" | MenuItem["category"]; label: string }> = [
-    { id: "all", label: "All" },
-    { id: "espresso", label: "Espresso" },
-    { id: "signature", label: "Signature" },
-    { id: "bites", label: "Bites" }
+export function CategoryTabs({ activeCategory, onChange, categories }: CategoryTabsProps) {
+  const defaultCategories: Array<{ key: string; label: string }> = [
+    { key: "all", label: "All" },
+    { key: "espresso", label: "Espresso" },
+    { key: "signature", label: "Signature" },
+    { key: "bites", label: "Bites" }
   ];
+
+  const tabs = categories && categories.length > 0 ? [{ key: "all", label: "All" }, ...categories] : defaultCategories;
 
   return (
     <div className="order-tabs" role="tablist" aria-label="Menu categories">
       {tabs.map((tab) => (
         <button
-          key={tab.id}
+          key={tab.key}
           type="button"
           role="tab"
-          aria-selected={activeCategory === tab.id}
-          className={`order-tab ${activeCategory === tab.id ? "order-tab-active" : ""}`}
-          onClick={() => onChange(tab.id)}
+          aria-selected={activeCategory === tab.key}
+          className={`order-tab ${activeCategory === tab.key ? "order-tab-active" : ""}`}
+          onClick={() => onChange(tab.key)}
         >
           {tab.label}
         </button>

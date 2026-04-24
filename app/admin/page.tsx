@@ -1,7 +1,7 @@
 "use client";
 
 import NextImage from "next/image";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Skeleton,
   SkeletonFormBlock,
@@ -15,8 +15,13 @@ import InventoryManager from "./InventoryManager";
 import { supabase } from "../../supabaseClient";
 
 type OrderStatus = "received" | "preparing" | "brewing" | "ready" | "completed" | "cancelled";
-type AdminTab = "orders" | "menu" | "highlights" | "promotional" | "sales" | "inventory";
-type MenuCategory = "espresso" | "signature" | "bites";
+type AdminTab = "orders" | "menu" | "promotional" | "sales" | "inventory";
+type MenuCategoryRow = {
+  key: string;
+  label: string;
+  sort_order: number | string;
+  active: boolean | null;
+};
 
 type DashboardOrder = {
   id: string;
@@ -77,14 +82,19 @@ type MenuManagerItem = {
   description: string | null;
   base_price: number | string | null;
   image_url: string | null;
-  category: MenuCategory | string | null;
+  category: string | null;
 };
 
 type NewMenuItemForm = {
   name: string;
   description: string;
   basePrice: string;
-  category: MenuCategory;
+  category: string;
+};
+
+type MenuCategoryForm = {
+  label: string;
+  active: boolean;
 };
 
 type TodayHighlightRow = {
@@ -154,6 +164,7 @@ const TODAY_HIGHLIGHT_SELECT_FIELDS = "id, menu_item_id, created_at";
 const TODAY_AT_BAR_SELECT_FIELDS =
   "id, title, description, dose, extraction_time, brew_temp, guest_score, carousel_enabled, carousel_autoplay, carousel_interval_ms, carousel_slides";
 const ADMIN_AUTH_STORAGE_KEY = "espressonism-admin-auth-session-v1";
+const DEFAULT_MENU_CATEGORY_KEY = "signature";
 const TODAY_AT_BAR_CAROUSEL_INTERVAL_MIN = 2200;
 const TODAY_AT_BAR_CAROUSEL_INTERVAL_MAX = 15000;
 const TODAY_AT_BAR_CAROUSEL_INTERVAL_DEFAULT = 5500;
@@ -180,7 +191,6 @@ const COLUMNS: ColumnConfig[] = [
 const ADMIN_TABS: Array<{ key: AdminTab; label: string }> = [
   { key: "orders", label: "Live Orders" },
   { key: "menu", label: "Menu Manager" },
-  { key: "highlights", label: "Today Highlights" },
   { key: "promotional", label: "Promotional" },
   { key: "sales", label: "Sales Summary" },
   { key: "inventory", label: "Inventory" }
@@ -190,14 +200,13 @@ const EMPTY_MENU_FORM: NewMenuItemForm = {
   name: "",
   description: "",
   basePrice: "",
-  category: "signature"
+  category: DEFAULT_MENU_CATEGORY_KEY
 };
 
-const MENU_CATEGORY_OPTIONS: Array<{ value: MenuCategory; label: string }> = [
-  { value: "espresso", label: "Espresso" },
-  { value: "signature", label: "Signature" },
-  { value: "bites", label: "Bites" }
-];
+const EMPTY_MENU_CATEGORY_FORM: MenuCategoryForm = {
+  label: "",
+  active: true
+};
 
 const EMPTY_TODAY_AT_BAR_FORM: TodayAtBarForm = {
   title: "",
@@ -229,14 +238,6 @@ function parseMoney(value: number | string | null | undefined): number {
   return numericValue;
 }
 
-function isMenuCategory(value: unknown): value is MenuCategory {
-  return value === "espresso" || value === "signature" || value === "bites";
-}
-
-function normalizeMenuCategory(value: unknown): MenuCategory {
-  return isMenuCategory(value) ? value : "signature";
-}
-
 function normalizeMenuManagerItem(item: MenuManagerItem): MenuManagerItem {
   return {
     ...item,
@@ -246,9 +247,48 @@ function normalizeMenuManagerItem(item: MenuManagerItem): MenuManagerItem {
 
 function formatMenuCategoryLabel(value: unknown): string {
   const category = normalizeMenuCategory(value);
-  if (category === "espresso") return "Espresso";
-  if (category === "bites") return "Bites";
-  return "Signature";
+  return category
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalizeMenuCategory(value: unknown): string {
+  if (typeof value !== "string") return DEFAULT_MENU_CATEGORY_KEY;
+  const normalized = value.trim();
+  return normalized || DEFAULT_MENU_CATEGORY_KEY;
+}
+
+function sortMenuCategories(categories: MenuCategoryRow[]): MenuCategoryRow[] {
+  return [...categories].sort((firstCategory, secondCategory) => {
+    const firstOrder = Number(firstCategory.sort_order) || 0;
+    const secondOrder = Number(secondCategory.sort_order) || 0;
+    const bySortOrder = firstOrder - secondOrder;
+    if (bySortOrder !== 0) return bySortOrder;
+    return firstCategory.label.localeCompare(secondCategory.label);
+  });
+}
+
+function slugifyCategoryKey(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function createUniqueCategoryKey(label: string, existingKeys: string[]): string {
+  const baseKey = slugifyCategoryKey(label) || "category";
+  let nextKey = baseKey;
+  let suffix = 2;
+
+  while (existingKeys.includes(nextKey)) {
+    nextKey = `${baseKey}-${suffix}`;
+    suffix += 1;
+  }
+
+  return nextKey;
 }
 
 function normalizeOrderItems(value: unknown): NormalizedOrderItem[] {
@@ -699,6 +739,17 @@ export default function AdminDashboardPage() {
   const [isMenuBucketImagesLoading, setIsMenuBucketImagesLoading] = useState(false);
   const [menuBucketImagesError, setMenuBucketImagesError] = useState<string | null>(null);
   const [deletingMenuItemId, setDeletingMenuItemId] = useState<string | null>(null);
+  const [expandedManagerCategories, setExpandedManagerCategories] = useState<Record<string, boolean>>({});
+  const [menuCategories, setMenuCategories] = useState<MenuCategoryRow[]>([]);
+  const [isMenuCategoriesLoading, setIsMenuCategoriesLoading] = useState(false);
+  const [menuCategoriesError, setMenuCategoriesError] = useState<string | null>(null);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<MenuCategoryRow | null>(null);
+  const [categoryForm, setCategoryForm] = useState<MenuCategoryForm>(EMPTY_MENU_CATEGORY_FORM);
+  const [isSavingCategory, setIsSavingCategory] = useState(false);
+  const [draggedCategoryKey, setDraggedCategoryKey] = useState<string | null>(null);
+  const [dropTargetCategoryKey, setDropTargetCategoryKey] = useState<string | null>(null);
+  const categoryLabelInputRef = useRef<HTMLInputElement | null>(null);
 
   const [todayHighlightRows, setTodayHighlightRows] = useState<TodayHighlightRow[]>([]);
   const [isHighlightsLoading, setIsHighlightsLoading] = useState(false);
@@ -1014,6 +1065,32 @@ export default function AdminDashboardPage() {
     return menuItems.filter((menuItem) => !highlightedMenuItemIds.has(menuItem.id));
   }, [menuItems, highlightedMenuItemIds]);
 
+  const menuCategoryOptions = useMemo(
+    () => sortMenuCategories(menuCategories.filter((category) => category.active !== false)),
+    [menuCategories]
+  );
+
+  const managerCategories = useMemo(() => menuCategoryOptions, [menuCategoryOptions]);
+
+  const managerCategoryItems = useMemo<Record<string, MenuManagerItem[]>>(() => {
+    const grouped: Record<string, MenuManagerItem[]> = {};
+
+    for (const category of managerCategories) {
+      grouped[category.key] = [];
+    }
+
+    for (const menuItem of menuItems) {
+      const normalizedCategory = normalizeMenuCategory(menuItem.category);
+      if (!grouped[normalizedCategory]) {
+        grouped[normalizedCategory] = [];
+      }
+
+      grouped[normalizedCategory].push(menuItem);
+    }
+
+    return grouped;
+  }, [managerCategories, menuItems]);
+
   const activePromoSlide = useMemo(() => {
     if (!activePromoSlideId) return null;
     return todayAtBarForm.carouselSlides.find((slide) => slide.id === activePromoSlideId) ?? null;
@@ -1049,6 +1126,23 @@ export default function AdminDashboardPage() {
     };
 
     void loadActiveOrders();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let isMounted = true;
+
+    const loadCategories = async () => {
+      await loadMenuCategories();
+      if (!isMounted) return;
+    };
+
+    void loadCategories();
 
     return () => {
       isMounted = false;
@@ -1336,6 +1430,8 @@ export default function AdminDashboardPage() {
     setUpdatingOrderId(null);
     setMenuItems([]);
     setMenuError(null);
+    setMenuCategories([]);
+    setMenuCategoriesError(null);
     setIsAddMenuFormOpen(false);
     setEditingItem(null);
     setMenuForm(EMPTY_MENU_FORM);
@@ -1347,6 +1443,14 @@ export default function AdminDashboardPage() {
     setMenuBucketImagesError(null);
     setIsMenuBucketImagesLoading(false);
     setDeletingMenuItemId(null);
+    setExpandedManagerCategories({});
+    setIsMenuCategoriesLoading(false);
+    setIsCategoryModalOpen(false);
+    setEditingCategory(null);
+    setCategoryForm(EMPTY_MENU_CATEGORY_FORM);
+    setIsSavingCategory(false);
+    setDraggedCategoryKey(null);
+    setDropTargetCategoryKey(null);
     setTodayHighlightRows([]);
     setHighlightsError(null);
     setIsAddHighlightsFormOpen(false);
@@ -1429,15 +1533,242 @@ export default function AdminDashboardPage() {
     setUpdatingOrderId((currentOrderId) => (currentOrderId === orderId ? null : currentOrderId));
   };
 
+  const getDefaultMenuCategoryKey = () => menuCategoryOptions[0]?.key ?? DEFAULT_MENU_CATEGORY_KEY;
+
   const resetMenuFormState = () => {
     setEditingItem(null);
-    setMenuForm(EMPTY_MENU_FORM);
+    setMenuForm({
+      ...EMPTY_MENU_FORM,
+      category: getDefaultMenuCategoryKey()
+    });
   };
 
   const openCreateMenuForm = () => {
+    if (menuCategoryOptions.length === 0) {
+      setMenuError("Add at least one category before creating a drink.");
+      return;
+    }
+
     setIsAddMenuFormOpen(true);
     resetMenuFormState();
     setMenuError(null);
+  };
+
+  const loadMenuCategories = async () => {
+    setIsMenuCategoriesLoading(true);
+    setMenuCategoriesError(null);
+
+    const { data, error } = await supabase
+      .from("menu_categories")
+      .select("key, label, sort_order, active")
+      .order("sort_order", { ascending: true })
+      .order("label", { ascending: true });
+
+    if (error) {
+      setMenuCategoriesError(error.message || "Unable to load menu categories.");
+      setMenuCategories([]);
+      setIsMenuCategoriesLoading(false);
+      return;
+    }
+
+    setMenuCategories(sortMenuCategories(((data ?? []) as MenuCategoryRow[]).map((category) => ({
+      key: category.key,
+      label: category.label,
+      sort_order: Number(category.sort_order) || 0,
+      active: category.active ?? true
+    }))));
+    setIsMenuCategoriesLoading(false);
+  };
+
+  const toggleManagerCategory = (categoryKey: string) => {
+    setExpandedManagerCategories((previousState) => ({
+      ...previousState,
+      [categoryKey]: !previousState[categoryKey]
+    }));
+  };
+
+  const getNextCategorySortOrder = () => {
+    return menuCategories.reduce((maxSortOrder, category) => {
+      const categorySortOrder = Number(category.sort_order) || 0;
+      return Math.max(maxSortOrder, categorySortOrder);
+    }, 0) + 1;
+  };
+
+  const startNewCategoryDraft = () => {
+    setEditingCategory(null);
+    setCategoryForm(EMPTY_MENU_CATEGORY_FORM);
+    setMenuCategoriesError(null);
+
+    window.requestAnimationFrame(() => {
+      categoryLabelInputRef.current?.focus();
+    });
+  };
+
+  const openManageCategoriesModal = () => {
+    startNewCategoryDraft();
+    setIsCategoryModalOpen(true);
+    setMenuCategoriesError(null);
+  };
+
+  const openEditCategoryForm = (category: MenuCategoryRow) => {
+    setEditingCategory(category);
+    setCategoryForm({
+      label: category.label,
+      active: Boolean(category.active)
+    });
+    setIsCategoryModalOpen(true);
+    setMenuCategoriesError(null);
+
+    window.requestAnimationFrame(() => {
+      categoryLabelInputRef.current?.focus();
+      categoryLabelInputRef.current?.select();
+    });
+  };
+
+  const closeCategoryForm = () => {
+    setIsCategoryModalOpen(false);
+    setEditingCategory(null);
+    setCategoryForm(EMPTY_MENU_CATEGORY_FORM);
+    setMenuCategoriesError(null);
+  };
+
+  const handleSaveCategory = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const nextLabel = categoryForm.label.trim();
+
+    if (!nextLabel) {
+      setMenuCategoriesError("Category label is required.");
+      return;
+    }
+
+    setIsSavingCategory(true);
+    setMenuCategoriesError(null);
+
+    const nextSortOrder = editingCategory ? Number(editingCategory.sort_order) || 0 : getNextCategorySortOrder();
+
+    const payload = {
+      label: nextLabel,
+      sort_order: nextSortOrder,
+      active: categoryForm.active
+    };
+
+    if (editingCategory) {
+      const { error } = await supabase.from("menu_categories").update(payload).eq("key", editingCategory.key);
+
+      if (error) {
+        setMenuCategoriesError(error.message || "Unable to update category.");
+        setIsSavingCategory(false);
+        return;
+      }
+    } else {
+      const nextKey = createUniqueCategoryKey(nextLabel, menuCategories.map((category) => category.key));
+      const { error } = await supabase.from("menu_categories").insert([
+        {
+          key: nextKey,
+          ...payload
+        }
+      ]);
+
+      if (error) {
+        setMenuCategoriesError(error.message || "Unable to create category.");
+        setIsSavingCategory(false);
+        return;
+      }
+    }
+
+    await loadMenuCategories();
+    startNewCategoryDraft();
+    setIsSavingCategory(false);
+    setAdminNotice({ tone: "success", message: editingCategory ? "Category updated." : "New category added." });
+  };
+
+  const handleDeleteCategory = (category: MenuCategoryRow) => {
+    setConfirmationModal({
+      title: "Delete Category",
+      message: `Delete ${category.label} from the database? This only works if no menu items are still linked to it.`,
+      confirmLabel: "Delete Category",
+      onConfirm: async () => {
+        setIsSavingCategory(true);
+        setMenuCategoriesError(null);
+
+        const { error } = await supabase.from("menu_categories").delete().eq("key", category.key);
+
+        if (error) {
+          const message = error.message?.toLowerCase().includes("foreign key")
+            ? "Category is still used by one or more drinks. Move those drinks to another category first, then delete it."
+            : error.message || "Unable to delete category.";
+          setMenuCategoriesError(message);
+          setIsSavingCategory(false);
+          return;
+        }
+
+        await loadMenuCategories();
+        if (editingCategory?.key === category.key) {
+          startNewCategoryDraft();
+        }
+        setIsSavingCategory(false);
+        setAdminNotice({ tone: "success", message: "Category deleted." });
+      }
+    });
+  };
+
+  const commitCategoryOrder = async (nextCategories: MenuCategoryRow[]) => {
+    const normalizedCategories = sortMenuCategories(
+      nextCategories.map((category, index) => ({
+        ...category,
+        sort_order: index + 1
+      }))
+    );
+
+    setMenuCategories(normalizedCategories);
+    setMenuCategoriesError(null);
+
+    const results = await Promise.all(
+      normalizedCategories.map((category) =>
+        supabase.from("menu_categories").update({ sort_order: category.sort_order }).eq("key", category.key)
+      )
+    );
+
+    const failedUpdate = results.find((result: { error?: { message?: string } | null }) => result.error);
+    if (failedUpdate?.error) {
+      setMenuCategoriesError(failedUpdate.error.message || "Unable to reorder categories.");
+      await loadMenuCategories();
+    }
+  };
+
+  const handleCategoryDragStart = (event: DragEvent<HTMLButtonElement>, categoryKey: string) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", categoryKey);
+    setDraggedCategoryKey(categoryKey);
+    setDropTargetCategoryKey(categoryKey);
+  };
+
+  const handleCategoryDragEnd = () => {
+    setDraggedCategoryKey(null);
+    setDropTargetCategoryKey(null);
+  };
+
+  const handleCategoryDrop = async (targetCategoryKey: string) => {
+    if (!draggedCategoryKey || draggedCategoryKey === targetCategoryKey) {
+      handleCategoryDragEnd();
+      return;
+    }
+
+    const sourceIndex = menuCategories.findIndex((category) => category.key === draggedCategoryKey);
+    const targetIndex = menuCategories.findIndex((category) => category.key === targetCategoryKey);
+
+    if (sourceIndex === -1 || targetIndex === -1) {
+      handleCategoryDragEnd();
+      return;
+    }
+
+    const nextCategories = [...menuCategories];
+    const [movedCategory] = nextCategories.splice(sourceIndex, 1);
+    nextCategories.splice(targetIndex, 0, movedCategory);
+
+    handleCategoryDragEnd();
+    await commitCategoryOrder(nextCategories);
   };
 
   const handleStartEditMenuItem = (menuItem: MenuManagerItem) => {
@@ -2517,168 +2848,124 @@ export default function AdminDashboardPage() {
             <div>
               <p className="barista-dashboard-kicker">Owner CMS</p>
               <h2>Menu Manager</h2>
-              <p>Create or remove drinks from the public menu.</p>
+              <p>Manage categories and drinks in one section.</p>
             </div>
 
-            <button
-              type="button"
-              className="barista-manager-toggle"
-              onClick={openCreateMenuForm}
-            >
-              Add New Drink
-            </button>
+            <div className="barista-manager-head-actions">
+              <button type="button" className="barista-manager-toggle" onClick={openManageCategoriesModal}>
+                Manage Categories
+              </button>
+
+              <button type="button" className="barista-manager-toggle" onClick={openCreateMenuForm}>
+                Add New Drink
+              </button>
+            </div>
           </header>
 
+          {menuCategoriesError ? <p className="barista-state barista-state-error">{menuCategoriesError}</p> : null}
           {menuError ? <p className="barista-state barista-state-error">{menuError}</p> : null}
 
-          {isMenuLoading ? (
-            <div className="barista-menu-table-wrap" aria-label="Loading menu items table" aria-busy="true">
+          {isMenuLoading || isMenuCategoriesLoading || isHighlightsLoading ? (
+            <div className="barista-menu-table-wrap" aria-label="Loading menu manager" aria-busy="true">
               <SkeletonPageSection titleWidth="36%" lineCount={2} lineWidths={["52%", "70%"]} />
               {Array.from({ length: 5 }).map((_, index) => (
                 <SkeletonTableRow
-                  key={`menu-table-skeleton-${index}`}
+                  key={`menu-manager-table-skeleton-${index}`}
                   columns={6}
                   columnWidths={["18%", "14%", "30%", "12%", "14%", "12%"]}
                 />
               ))}
             </div>
-          ) : menuItems.length === 0 ? (
-            <p className="barista-empty">No menu items available.</p>
           ) : (
-            <div className="barista-menu-table-wrap" aria-label="Menu items table">
-              <table className="barista-menu-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Category</th>
-                    <th>Description</th>
-                    <th>Price</th>
-                    <th>Image</th>
-                    <th className="barista-table-action-cell">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {menuItems.map((menuItem) => {
-                    const isDeleting = deletingMenuItemId === menuItem.id;
-                    const isUpdatingImage = updatingMenuImageId === menuItem.id;
+            <div className="barista-category-accordion-list" aria-label="Menu categories and items">
+              {managerCategories.length === 0 ? <p className="barista-empty">No active categories yet.</p> : null}
 
-                    return (
-                      <tr key={menuItem.id}>
-                        <td>{menuItem.name}</td>
-                        <td>{formatMenuCategoryLabel(menuItem.category)}</td>
-                        <td>{menuItem.description?.trim() || "No description"}</td>
-                        <td>{formatCurrency(parseMoney(menuItem.base_price))}</td>
-                        <td>
-                          <button
-                            type="button"
-                            className="barista-menu-image-btn"
-                            onClick={() => openMenuImageDialog(menuItem)}
-                            disabled={isUpdatingImage}
-                          >
-                            {menuItem.image_url ? "Image" : "Add Image"}
-                          </button>
-                        </td>
-                        <td className="barista-menu-actions">
-                          <button
-                            type="button"
-                            className="barista-menu-edit-btn"
-                            onClick={() => handleStartEditMenuItem(menuItem)}
-                            disabled={isDeleting || isUpdatingImage}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="barista-danger-btn"
-                            onClick={() => handleDeleteMenuItem(menuItem)}
-                            disabled={isDeleting || isUpdatingImage}
-                          >
-                            {isDeleting ? "Deleting..." : "Delete"}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      ) : null}
+              {managerCategories.map((category) => {
+                const isExpanded = expandedManagerCategories[category.key] ?? false;
+                const categoryItems = managerCategoryItems[category.key] ?? [];
 
-      {activeTab === "highlights" ? (
-        <section className="barista-manager-panel" aria-label="Today highlights manager">
-          <header className="barista-manager-head">
-            <div>
-              <p className="barista-dashboard-kicker">Owner CMS</p>
-              <h2>Today Highlights</h2>
-              <p>Choose which drinks appear in the quick-add highlights on the order page.</p>
-            </div>
+                return (
+                  <article key={category.key} className="barista-category-accordion-card">
+                    <button
+                      type="button"
+                      className={`barista-category-accordion-trigger ${isExpanded ? "barista-category-accordion-trigger-expanded" : ""}`}
+                      aria-expanded={isExpanded}
+                      aria-controls={`manager-category-${category.key}`}
+                      onClick={() => toggleManagerCategory(category.key)}
+                    >
+                      <span className="barista-category-accordion-title">{category.label}</span>
+                      <span className="barista-category-accordion-meta">{categoryItems.length} item{categoryItems.length === 1 ? "" : "s"}</span>
+                      <span className="barista-category-accordion-icon" aria-hidden="true">
+                        {isExpanded ? "−" : "+"}
+                      </span>
+                    </button>
 
-            <button
-              type="button"
-              className="barista-manager-toggle"
-              disabled={availableHighlightMenuItems.length === 0}
-              onClick={() => {
-                setIsAddHighlightsFormOpen(true);
-                setHighlightCandidateId(availableHighlightMenuItems[0]?.id ?? "");
-                setHighlightsError(null);
-              }}
-            >
-              Add Highlight
-            </button>
-          </header>
+                    {isExpanded ? (
+                      <div id={`manager-category-${category.key}`} className="barista-category-accordion-content">
+                        {categoryItems.length === 0 ? (
+                          <p className="barista-empty">No menu items under this category yet.</p>
+                        ) : (
+                          <div className="barista-menu-table-wrap">
+                            <table className="barista-menu-table" aria-label={`${category.label} items`}>
+                              <thead>
+                                <tr>
+                                  <th>Name</th>
+                                  <th>Description</th>
+                                  <th>Price</th>
+                                  <th>Image</th>
+                                  <th className="barista-table-action-cell">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {categoryItems.map((menuItem) => {
+                                  const isDeleting = deletingMenuItemId === menuItem.id;
+                                  const isUpdatingImage = updatingMenuImageId === menuItem.id;
 
-          {highlightsError ? <p className="barista-state barista-state-error">{highlightsError}</p> : null}
-
-          {isHighlightsLoading ? (
-            <div className="barista-menu-table-wrap" aria-label="Loading today highlights table" aria-busy="true">
-              <SkeletonPageSection titleWidth="42%" lineCount={2} lineWidths={["58%", "76%"]} />
-              {Array.from({ length: 4 }).map((_, index) => (
-                <SkeletonTableRow
-                  key={`highlights-table-skeleton-${index}`}
-                  columns={4}
-                  columnWidths={["24%", "42%", "16%", "18%"]}
-                />
-              ))}
-            </div>
-          ) : todayHighlightItems.length === 0 ? (
-            <p className="barista-empty">No highlighted drinks yet. Add one to show quick-add options on /order.</p>
-          ) : (
-            <div className="barista-menu-table-wrap" aria-label="Today highlights table">
-              <table className="barista-menu-table">
-                <thead>
-                  <tr>
-                    <th>Drink</th>
-                    <th>Description</th>
-                    <th>Price</th>
-                    <th className="barista-table-action-cell">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {todayHighlightItems.map(({ rowId, item }) => {
-                    const isDeleting = deletingHighlightId === rowId;
-
-                    return (
-                      <tr key={rowId}>
-                        <td>{item.name}</td>
-                        <td>{item.description?.trim() || "No description"}</td>
-                        <td>{formatCurrency(parseMoney(item.base_price))}</td>
-                        <td className="barista-menu-actions">
-                          <button
-                            type="button"
-                            className="barista-danger-btn"
-                            onClick={() => handleDeleteTodayHighlight(rowId, item.name)}
-                            disabled={isDeleting}
-                          >
-                            {isDeleting ? "Removing..." : "Remove"}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                                  return (
+                                    <tr key={menuItem.id}>
+                                      <td>{menuItem.name}</td>
+                                      <td>{menuItem.description?.trim() || "No description"}</td>
+                                      <td>{formatCurrency(parseMoney(menuItem.base_price))}</td>
+                                      <td>
+                                        <button
+                                          type="button"
+                                          className="barista-menu-image-btn"
+                                          onClick={() => openMenuImageDialog(menuItem)}
+                                          disabled={isUpdatingImage}
+                                        >
+                                          {menuItem.image_url ? "Image" : "Add Image"}
+                                        </button>
+                                      </td>
+                                      <td className="barista-menu-actions">
+                                        <button
+                                          type="button"
+                                          className="barista-menu-edit-btn"
+                                          onClick={() => handleStartEditMenuItem(menuItem)}
+                                          disabled={isDeleting || isUpdatingImage}
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="barista-danger-btn"
+                                          onClick={() => handleDeleteMenuItem(menuItem)}
+                                          disabled={isDeleting || isUpdatingImage}
+                                        >
+                                          {isDeleting ? "Deleting..." : "Delete"}
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>
@@ -3043,6 +3330,7 @@ export default function AdminDashboardPage() {
                   <select
                     id="menuItemCategory"
                     value={menuForm.category}
+                    disabled={menuCategoryOptions.length === 0}
                     onChange={(event) =>
                       setMenuForm((previousForm) => ({
                         ...previousForm,
@@ -3050,11 +3338,15 @@ export default function AdminDashboardPage() {
                       }))
                     }
                   >
-                    {MENU_CATEGORY_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
+                    {menuCategoryOptions.length > 0 ? (
+                      menuCategoryOptions.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No categories available</option>
+                    )}
                   </select>
                 </label>
 
@@ -3120,6 +3412,183 @@ export default function AdminDashboardPage() {
                   disabled={isSavingMenuItem}
                 >
                   {isSavingMenuItem ? "Saving..." : editingItem ? "Update Item" : "Add Item"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {isCategoryModalOpen ? (
+        <div
+          className="barista-image-modal-backdrop"
+          role="presentation"
+          onClick={() => closeCategoryForm()}
+        >
+          <section
+            className="barista-image-modal barista-manager-modal barista-category-manager-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={editingCategory ? `Edit ${editingCategory.label}` : "Add new category"}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="barista-image-modal-head">
+              <div>
+                <p className="barista-dashboard-kicker">Owner CMS</p>
+                <h3>Manage Categories</h3>
+              </div>
+
+              <button
+                type="button"
+                className="barista-image-modal-close"
+                onClick={() => closeCategoryForm()}
+                aria-label="Close category form"
+              >
+                X
+              </button>
+            </header>
+
+            <form className="barista-manager-form" onSubmit={handleSaveCategory}>
+              <div className="barista-form-field barista-form-field-full">
+                <span>Current Categories</span>
+                {menuCategories.length === 0 ? (
+                  <p className="barista-image-helper">No categories yet. Create the first one below.</p>
+                ) : (
+                  <div className="barista-category-manager-list" role="list" aria-label="Category manager list">
+                    {sortMenuCategories(menuCategories).map((category) => {
+                      const isEditing = editingCategory?.key === category.key;
+                      const isDragging = draggedCategoryKey === category.key;
+                      const isDropTarget = dropTargetCategoryKey === category.key;
+
+                      return (
+                        <article
+                          key={category.key}
+                          className={[
+                            "barista-category-manager-item",
+                            isEditing ? "barista-category-manager-item-active" : "",
+                            isDragging ? "barista-category-manager-item-dragging" : "",
+                            isDropTarget ? "barista-category-manager-item-drop-target" : ""
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          role="listitem"
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            setDropTargetCategoryKey(category.key);
+                          }}
+                          onDragLeave={() => {
+                            if (dropTargetCategoryKey === category.key) {
+                              setDropTargetCategoryKey(null);
+                            }
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            void handleCategoryDrop(category.key);
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="barista-category-manager-drag-handle"
+                            draggable
+                            onDragStart={(event) => handleCategoryDragStart(event, category.key)}
+                            onDragEnd={handleCategoryDragEnd}
+                            aria-label={`Drag ${category.label}`}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                              <circle cx="8" cy="7" r="1.5" />
+                              <circle cx="8" cy="12" r="1.5" />
+                              <circle cx="8" cy="17" r="1.5" />
+                              <circle cx="16" cy="7" r="1.5" />
+                              <circle cx="16" cy="12" r="1.5" />
+                              <circle cx="16" cy="17" r="1.5" />
+                            </svg>
+                          </button>
+
+                          <div className="barista-category-manager-copy">
+                            <strong>{category.label}</strong>
+                            <span>
+                              Key: {category.key} | {category.active === false ? "Hidden" : "Visible"}
+                            </span>
+                          </div>
+
+                          <div className="barista-category-manager-actions">
+                            <button
+                              type="button"
+                              className="barista-menu-edit-btn"
+                              onClick={() => openEditCategoryForm(category)}
+                              disabled={isSavingCategory}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="barista-danger-btn"
+                              onClick={() => handleDeleteCategory(category)}
+                              disabled={isSavingCategory}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="barista-logout-btn"
+                  onClick={() => startNewCategoryDraft()}
+                  disabled={isSavingCategory}
+                >
+                  New Category
+                </button>
+              </div>
+
+              <div className="barista-manager-form-grid">
+                <label className="barista-form-field" htmlFor="menuCategoryLabel">
+                  {editingCategory ? "Edit Label" : "New Label"}
+                  <input
+                    id="menuCategoryLabel"
+                    ref={categoryLabelInputRef}
+                    type="text"
+                    value={categoryForm.label}
+                    onChange={(event) => setCategoryForm((previousForm) => ({ ...previousForm, label: event.target.value }))}
+                    placeholder="Seasonal Specials"
+                    required
+                  />
+                </label>
+
+                <label className="barista-form-field barista-form-field-toggle barista-form-field-full" htmlFor="menuCategoryActive">
+                  <input
+                    id="menuCategoryActive"
+                    type="checkbox"
+                    checked={categoryForm.active}
+                    onChange={(event) => setCategoryForm((previousForm) => ({ ...previousForm, active: event.target.checked }))}
+                  />
+                  <span>Show category in the menu</span>
+                </label>
+
+                {editingCategory ? (
+                  <p className="barista-image-helper barista-form-field-full">
+                    Editing category key: {editingCategory.key}
+                  </p>
+                ) : (
+                  <p className="barista-image-helper barista-form-field-full">
+                    Creating a category generates a database key from the label.
+                  </p>
+                )}
+              </div>
+
+              {menuCategoriesError ? <p className="barista-state barista-state-error">{menuCategoriesError}</p> : null}
+
+              <div className="barista-manager-actions">
+                <button type="button" className="barista-logout-btn" onClick={() => closeCategoryForm()}>
+                  Close
+                </button>
+
+                <button type="submit" className="barista-action-btn barista-manager-submit" disabled={isSavingCategory}>
+                  {isSavingCategory ? "Saving..." : editingCategory ? "Save Changes" : "Create Category"}
                 </button>
               </div>
             </form>

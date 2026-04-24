@@ -145,7 +145,7 @@ export function Hero({ title, subtitle, description, actions, cardContent, cardC
         </div>
       </section>
 
-      <aside className={`${resolvedCardClassName} intro intro-2`} aria-label="Today highlights">
+      <aside className={`${resolvedCardClassName} intro intro-2`} aria-label="Highlights">
         {cardContent}
       </aside>
     </main>

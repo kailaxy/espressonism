@@ -27,13 +27,6 @@ type CheckoutStep = "cart" | "payment" | "tracking";
 
 const ORDER_DRAFT_STORAGE_KEY = "espressonism-order-draft-v1";
 
-const DEFAULT_HIGHLIGHT_ITEM_NAMES = new Set([
-  "spanish latte",
-  "sea salt mocha",
-  "orange cold brew",
-  "butter croissant"
-]);
-
 const MENU_NOTES: Record<string, string> = {
   "spanish latte": "Best seller",
   "orange cold brew": "Seasonal",
@@ -49,8 +42,11 @@ interface MenuItemRow {
   category: string | null;
 }
 
-interface TodayHighlightRow {
-  menu_item_id: string | null;
+interface MenuCategoryRow {
+  key: string;
+  label: string;
+  sort_order: number;
+  active: boolean;
 }
 
 interface ToastMessage {
@@ -90,10 +86,7 @@ function isPaymentMethod(value: unknown): value is PaymentMethod {
 }
 
 function normalizeMenuCategory(value: unknown): MenuItem["category"] {
-  if (value === "espresso" || value === "signature" || value === "bites") {
-    return value;
-  }
-
+  if (typeof value === "string" && value.trim()) return value;
   return "signature";
 }
 
@@ -116,8 +109,17 @@ function generatePickupTimes(): string[] {
   const now = new Date();
   const prepReadyTime = new Date(now.getTime() + 15 * 60 * 1000);
 
-  const roundedMinutes = Math.ceil(prepReadyTime.getMinutes() / 15) * 15;
-  prepReadyTime.setMinutes(roundedMinutes, 0, 0);
+  // Check if we can offer the next 15-minute slot
+  const currentMinutes = prepReadyTime.getMinutes();
+  let targetMinutes = Math.ceil(currentMinutes / 15) * 15;
+  
+  // If ceiling rounds to 60+, we need the next hour
+  if (targetMinutes >= 60) {
+    targetMinutes -= 60;
+    prepReadyTime.setHours(prepReadyTime.getHours() + 1);
+  }
+  
+  prepReadyTime.setMinutes(targetMinutes, 0, 0);
 
   const formatter = new Intl.DateTimeFormat("en-US", {
     month: "long",
@@ -260,12 +262,11 @@ function notifyTelegramOrderPlaced(payload: {
 }
 
 export default function OrderPage() {
-  const [activeCategory, setActiveCategory] = useState<"all" | MenuItem["category"]>("all");
+  const [activeCategory, setActiveCategory] = useState<"all" | string>("all");
   const [menuData, setMenuData] = useState<MenuItem[]>([]);
+  const [categories, setCategories] = useState<Array<{ key: string; label: string }>>([]);
   const [isMenuLoading, setIsMenuLoading] = useState(true);
   const [menuError, setMenuError] = useState<string | null>(null);
-  const [highlightItemIds, setHighlightItemIds] = useState<string[]>([]);
-  const [isHighlightsLoading, setIsHighlightsLoading] = useState(true);
 
   const [cartLines, setCartLines] = useState<CartLine[]>([]);
   const [pickupTime, setPickupTime] = useState("");
@@ -324,18 +325,6 @@ export default function OrderPage() {
   const serviceFee = subtotal > 0 ? 25 : 0;
   const grandTotal = subtotal + serviceFee;
 
-  const highlightItems = useMemo(() => {
-    if (highlightItemIds.length > 0) {
-      const highlightSet = new Set(highlightItemIds);
-      const configuredItems = menuData.filter((item) => highlightSet.has(item.id));
-      if (configuredItems.length > 0) return configuredItems;
-    }
-
-    const preferredItems = menuData.filter((item) => DEFAULT_HIGHLIGHT_ITEM_NAMES.has(item.name.toLowerCase()));
-    if (preferredItems.length > 0) return preferredItems.slice(0, 4);
-    return menuData.slice(0, 4);
-  }, [highlightItemIds, menuData]);
-
   const modifierFinalPrice = useMemo(() => {
     if (!selectedItem) return 0;
     return calculateUnitPrice(selectedItem.price, selectedSize, selectedMilk);
@@ -353,10 +342,37 @@ export default function OrderPage() {
   useEffect(() => {
     let isMounted = true;
 
-    const fetchMenuItems = async () => {
+    const fetchMenuAndCategories = async () => {
       setIsMenuLoading(true);
       setMenuError(null);
 
+      // Fetch categories
+      const { data: categoryData, error: categoryError } = await supabase
+        .from("menu_categories")
+        .select("key, label, sort_order, active")
+        .eq("active", true)
+        .order("sort_order", { ascending: true });
+
+      if (!isMounted) return;
+
+      let fetchedCategories: Array<{ key: string; label: string }> = [];
+      if (categoryError || !categoryData) {
+        // Fallback to hardcoded categories if database query fails
+        fetchedCategories = [
+          { key: "espresso", label: "Espresso" },
+          { key: "signature", label: "Signature" },
+          { key: "bites", label: "Bites" }
+        ];
+      } else {
+        fetchedCategories = categoryData.map((cat: MenuCategoryRow) => ({
+          key: cat.key,
+          label: cat.label
+        }));
+      }
+
+      setCategories(fetchedCategories);
+
+      // Fetch menu items
       const { data, error } = await supabase
         .from("menu_items")
         .select("*")
@@ -376,7 +392,7 @@ export default function OrderPage() {
       setIsMenuLoading(false);
     };
 
-    void fetchMenuItems();
+    void fetchMenuAndCategories();
 
     return () => {
       isMounted = false;
@@ -418,34 +434,6 @@ export default function OrderPage() {
     return () => {
       isMounted = false;
       authListener.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const fetchTodayHighlights = async () => {
-      setIsHighlightsLoading(true);
-
-      const { data, error } = await supabase
-        .from("today_highlights")
-        .select("menu_item_id")
-        .order("created_at", { ascending: true });
-
-      if (!isMounted) return;
-
-      if (!error) {
-        const nextIds = [...new Set(((data ?? []) as TodayHighlightRow[]).map((row) => row.menu_item_id).filter(Boolean))] as string[];
-        setHighlightItemIds(nextIds);
-      }
-
-      setIsHighlightsLoading(false);
-    };
-
-    void fetchTodayHighlights();
-
-    return () => {
-      isMounted = false;
     };
   }, []);
 
@@ -654,6 +642,13 @@ export default function OrderPage() {
   };
 
   const handleConfirmOrder = async () => {
+    // Mandatory login check
+    if (!user?.id) {
+      setCheckoutError("Please log in before placing your order.");
+      setIsAuthModalOpen(true);
+      return;
+    }
+
     const needsDeliveryAddress = orderType === "delivery" && deliveryAddress.trim().length === 0;
     const missingName = customerName.trim().length === 0;
     const missingPhone = customerPhone.trim().length === 0;
@@ -703,7 +698,7 @@ export default function OrderPage() {
       payment_method: paymentMethod,
       gcash_reference: paymentMethod === "gcash" ? gcashReference.trim() : null,
       delivery_address: orderType === "delivery" ? deliveryAddress.trim() : null,
-      user_id: user?.id ?? null
+      user_id: user.id
     };
 
     let insertResponse = await supabase
@@ -978,13 +973,10 @@ export default function OrderPage() {
                   </>
                 ) : (
                   <>
-                    <p className="loyalty-banner-title">Log in to earn stamps for your order</p>
-                    <div className="loyalty-banner-cta">
-                      <button type="button" className="loyalty-banner-link" onClick={() => setIsAuthModalOpen(true)}>
-                        Log in now
-                      </button>
-                      <span>Or continue as guest</span>
-                    </div>
+                    <p className="loyalty-banner-title">Please log in to continue with your order</p>
+                    <button type="button" className="loyalty-banner-link" onClick={() => setIsAuthModalOpen(true)}>
+                      Log in now
+                    </button>
                   </>
                 )}
               </div>
@@ -1028,6 +1020,7 @@ export default function OrderPage() {
               onClick={handleConfirmOrder}
               disabled={
                 isCheckingOut ||
+                !user?.id ||
                 cartLines.length === 0 ||
                 customerName.trim().length === 0 ||
                 customerPhone.trim().length === 0 ||
@@ -1045,10 +1038,9 @@ export default function OrderPage() {
               onCategoryChange={setActiveCategory}
               items={filteredItems}
               cartLines={cartLines}
-              highlightItems={highlightItems}
               quantities={quantities}
               isMenuLoading={isMenuLoading}
-              isHighlightsLoading={isHighlightsLoading}
+              isHighlightsLoading={false}
               menuError={menuError}
               cartCount={cartCount}
               grandTotal={grandTotal}
@@ -1056,6 +1048,7 @@ export default function OrderPage() {
               onQuickAdd={quickAddDefault}
               onCustomize={openModifier}
               onViewCart={openCartView}
+              categories={categories}
             />
 
             <ModifierModal
