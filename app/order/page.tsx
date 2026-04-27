@@ -12,7 +12,8 @@ import {
 import {
   type CartLine,
   type MenuItem,
-  type MilkOption,
+  type MenuItemCustomizationOption,
+  type SelectedCustomizationOption,
   type SizeOption,
   type OrderType,
   type PaymentMethod
@@ -38,8 +39,26 @@ interface MenuItemRow {
   name: string;
   description: string | null;
   base_price: number | string;
+  price_solo: number | string | null;
+  price_doppio: number | string | null;
   image_url: string | null;
   category: string | null;
+}
+
+interface CustomizationOptionRow {
+  id: string;
+  name: string;
+  option_type: string;
+  extra_cost: number | string;
+  active: boolean;
+}
+
+interface MenuItemCustomizationRow {
+  menu_item_id: string;
+  required: boolean;
+  max_select: number;
+  sort_order: number;
+  customization: CustomizationOptionRow | null;
 }
 
 interface MenuCategoryRow {
@@ -91,17 +110,29 @@ function normalizeMenuCategory(value: unknown): MenuItem["category"] {
 }
 
 function mapMenuRowToItem(row: MenuItemRow): MenuItem {
+  return mapMenuRowToItemWithOptions(row, []);
+}
+
+function mapMenuRowToItemWithOptions(row: MenuItemRow, options: MenuItemCustomizationOption[]): MenuItem {
   const normalizedName = row.name.trim().toLowerCase();
-  const parsedPrice = Number(row.base_price);
+  const parsedBasePrice = Number(row.base_price);
+  const parsedSoloPrice = Number(row.price_solo);
+  const parsedDoppioPrice = Number(row.price_doppio);
+  const safeBasePrice = Number.isFinite(parsedBasePrice) ? parsedBasePrice : 0;
+  const safeSoloPrice = Number.isFinite(parsedSoloPrice) ? parsedSoloPrice : safeBasePrice;
+  const safeDoppioPrice = Number.isFinite(parsedDoppioPrice) ? parsedDoppioPrice : safeBasePrice;
 
   return {
     id: row.id,
     name: row.name,
     description: row.description?.trim() || "Crafted fresh for your next coffee break.",
-    price: Number.isFinite(parsedPrice) ? parsedPrice : 0,
+    price: safeSoloPrice,
+    priceSolo: safeSoloPrice,
+    priceDoppio: safeDoppioPrice,
     category: normalizeMenuCategory(row.category),
     imageUrl: row.image_url,
-    note: MENU_NOTES[normalizedName]
+    note: MENU_NOTES[normalizedName],
+    customizationOptions: options
   };
 }
 
@@ -142,18 +173,33 @@ function formatLegacyPickupWindow(value: string): string {
   return value;
 }
 
-function calculateUnitPrice(basePrice: number, size: SizeOption, milk: MilkOption): number {
-  const sizeCharge = size === "large" ? 20 : 0;
-  const milkCharge = milk === "whole" ? 0 : 50;
-  return basePrice + sizeCharge + milkCharge;
+function toNumber(value: number | string | null | undefined): number {
+  const parsed = typeof value === "string" ? Number(value) : value;
+  if (typeof parsed !== "number" || !Number.isFinite(parsed)) return 0;
+  return parsed;
+}
+
+function calculateUnitPrice(item: MenuItem, size: SizeOption, selectedOptions: SelectedCustomizationOption[]): number {
+  const sizePrice = size === "doppio" ? item.priceDoppio : item.priceSolo;
+  const addOnsTotal = selectedOptions.reduce((sum, option) => sum + toNumber(option.extraCost), 0);
+  return sizePrice + addOnsTotal;
 }
 
 function isSizeOption(value: unknown): value is SizeOption {
-  return value === "regular" || value === "large";
+  return value === "solo" || value === "doppio";
 }
 
-function isMilkOption(value: unknown): value is MilkOption {
-  return value === "whole" || value === "oat" || value === "almond";
+function isSelectedCustomizationOption(value: unknown): value is SelectedCustomizationOption {
+  if (!value || typeof value !== "object") return false;
+
+  const option = value as Partial<SelectedCustomizationOption>;
+  return (
+    typeof option.id === "string" &&
+    typeof option.name === "string" &&
+    typeof option.optionType === "string" &&
+    typeof option.extraCost === "number" &&
+    Number.isFinite(option.extraCost)
+  );
 }
 
 function isCartLine(value: unknown): value is CartLine {
@@ -174,7 +220,8 @@ function isCartLine(value: unknown): value is CartLine {
     Number.isInteger(line.quantity) &&
     line.quantity > 0 &&
     isSizeOption(line.size) &&
-    isMilkOption(line.milk) &&
+    Array.isArray(line.selectedOptions) &&
+    line.selectedOptions.every(isSelectedCustomizationOption) &&
     hasValidImageUrl
   );
 }
@@ -229,6 +276,80 @@ function mergeCartLines(existingLines: CartLine[], nextLines: CartLine[]): CartL
   });
 
   return mergedLines;
+}
+
+function buildDefaultSelectedOptionIds(item: MenuItem): string[] {
+  const groupedOptions = item.customizationOptions.reduce<Record<string, MenuItemCustomizationOption[]>>((acc, option) => {
+    const key = option.optionType || "other";
+    if (!acc[key]) {
+      acc[key] = [];
+    }
+    acc[key].push(option);
+    return acc;
+  }, {});
+
+  const defaults = new Set<string>();
+
+  Object.values(groupedOptions).forEach((options) => {
+    const sorted = [...options].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    const requiredOptions = sorted.filter((option) => option.required);
+    if (requiredOptions.length === 0) return;
+
+    const maxSelect = Math.max(...requiredOptions.map((option) => option.maxSelect), 1);
+    requiredOptions.slice(0, maxSelect).forEach((option) => defaults.add(option.id));
+  });
+
+  return [...defaults];
+}
+
+function normalizeSelectedOptionIds(item: MenuItem, selectedOptionIds: string[]): string[] {
+  const availableById = new Map(item.customizationOptions.map((option) => [option.id, option]));
+  const safeSelected = selectedOptionIds.filter((optionId) => availableById.has(optionId));
+
+  const groupedOptions = item.customizationOptions.reduce<Record<string, MenuItemCustomizationOption[]>>((acc, option) => {
+    const key = option.optionType || "other";
+    if (!acc[key]) {
+      acc[key] = [];
+    }
+    acc[key].push(option);
+    return acc;
+  }, {});
+
+  const normalized = new Set<string>(safeSelected);
+
+  Object.values(groupedOptions).forEach((options) => {
+    const sorted = [...options].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    const selectedInGroup = sorted.filter((option) => normalized.has(option.id));
+    const maxSelect = Math.max(...sorted.map((option) => option.maxSelect), 1);
+
+    if (selectedInGroup.length > maxSelect) {
+      selectedInGroup.slice(maxSelect).forEach((option) => normalized.delete(option.id));
+    }
+
+    const hasRequired = sorted.some((option) => option.required);
+    const selectedAfterClamp = sorted.filter((option) => normalized.has(option.id));
+    if (hasRequired && selectedAfterClamp.length === 0) {
+      const fallback = sorted.find((option) => option.required) ?? sorted[0];
+      if (fallback) {
+        normalized.add(fallback.id);
+      }
+    }
+  });
+
+  return [...normalized];
+}
+
+function mapSelectedOptions(item: MenuItem, selectedOptionIds: string[]): SelectedCustomizationOption[] {
+  const selectedSet = new Set(selectedOptionIds);
+  return item.customizationOptions
+    .filter((option) => selectedSet.has(option.id))
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+    .map((option) => ({
+      id: option.id,
+      name: option.name,
+      optionType: option.optionType,
+      extraCost: option.extraCost
+    }));
 }
 
 function notifyTelegramOrderPlaced(payload: {
@@ -288,8 +409,8 @@ export default function OrderPage() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
-  const [selectedSize, setSelectedSize] = useState<SizeOption>("regular");
-  const [selectedMilk, setSelectedMilk] = useState<MilkOption>("whole");
+  const [selectedSize, setSelectedSize] = useState<SizeOption>("solo");
+  const [selectedOptionIds, setSelectedOptionIds] = useState<string[]>([]);
   const [isModifierOpen, setIsModifierOpen] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [user, setUser] = useState<{ id: string; email?: string | null } | null>(null);
@@ -322,13 +443,20 @@ export default function OrderPage() {
     [cartLines]
   );
 
-  const serviceFee = subtotal > 0 ? 25 : 0;
-  const grandTotal = subtotal + serviceFee;
+  const grandTotal = subtotal;
 
   const modifierFinalPrice = useMemo(() => {
     if (!selectedItem) return 0;
-    return calculateUnitPrice(selectedItem.price, selectedSize, selectedMilk);
-  }, [selectedItem, selectedSize, selectedMilk]);
+    const selectedOptions = selectedItem.customizationOptions
+      .filter((option) => selectedOptionIds.includes(option.id))
+      .map<SelectedCustomizationOption>((option) => ({
+        id: option.id,
+        name: option.name,
+        optionType: option.optionType,
+        extraCost: option.extraCost
+      }));
+    return calculateUnitPrice(selectedItem, selectedSize, selectedOptions);
+  }, [selectedItem, selectedSize, selectedOptionIds]);
 
   const orderNumber = useMemo(() => {
     if (currentOrderId) {
@@ -346,17 +474,26 @@ export default function OrderPage() {
       setIsMenuLoading(true);
       setMenuError(null);
 
-      // Fetch categories
-      const { data: categoryData, error: categoryError } = await supabase
-        .from("menu_categories")
-        .select("key, label, sort_order, active")
-        .eq("active", true)
-        .order("sort_order", { ascending: true });
+      const [categoriesResult, menuResult, customizationsResult] = await Promise.all([
+        supabase
+          .from("menu_categories")
+          .select("key, label, sort_order, active")
+          .eq("active", true)
+          .order("sort_order", { ascending: true }),
+        supabase
+          .from("menu_items")
+          .select("*")
+          .order("name", { ascending: true }),
+        supabase
+          .from("menu_item_customizations")
+          .select("menu_item_id, required, max_select, sort_order, customization:menu_customization_options(id, name, option_type, extra_cost, active)")
+          .order("sort_order", { ascending: true })
+      ]);
 
       if (!isMounted) return;
 
       let fetchedCategories: Array<{ key: string; label: string }> = [];
-      if (categoryError || !categoryData) {
+      if (categoriesResult.error || !categoriesResult.data) {
         // Fallback to hardcoded categories if database query fails
         fetchedCategories = [
           { key: "espresso", label: "Espresso" },
@@ -364,7 +501,7 @@ export default function OrderPage() {
           { key: "bites", label: "Bites" }
         ];
       } else {
-        fetchedCategories = categoryData.map((cat: MenuCategoryRow) => ({
+        fetchedCategories = categoriesResult.data.map((cat: MenuCategoryRow) => ({
           key: cat.key,
           label: cat.label
         }));
@@ -372,22 +509,40 @@ export default function OrderPage() {
 
       setCategories(fetchedCategories);
 
-      // Fetch menu items
-      const { data, error } = await supabase
-        .from("menu_items")
-        .select("*")
-        .order("name", { ascending: true });
-
-      if (!isMounted) return;
-
-      if (error) {
+      if (menuResult.error) {
         setMenuData([]);
         setMenuError("Unable to load menu right now. Please try again in a moment.");
         setIsMenuLoading(false);
         return;
       }
 
-      const mappedMenuItems = ((data ?? []) as MenuItemRow[]).map(mapMenuRowToItem);
+      const customizationRows = (customizationsResult.data ?? []) as MenuItemCustomizationRow[];
+      const customizationMap = customizationRows.reduce<Record<string, MenuItemCustomizationOption[]>>((acc, row) => {
+        const customOption = row.customization;
+        if (!customOption || customOption.active === false) {
+          return acc;
+        }
+
+        if (!acc[row.menu_item_id]) {
+          acc[row.menu_item_id] = [];
+        }
+
+        acc[row.menu_item_id].push({
+          id: customOption.id,
+          name: customOption.name,
+          optionType: customOption.option_type,
+          extraCost: toNumber(customOption.extra_cost),
+          required: row.required,
+          maxSelect: Math.max(1, Number(row.max_select) || 1),
+          sortOrder: Number(row.sort_order) || 0
+        });
+
+        return acc;
+      }, {});
+
+      const mappedMenuItems = ((menuResult.data ?? []) as MenuItemRow[]).map((row) =>
+        mapMenuRowToItemWithOptions(row, customizationMap[row.id] ?? [])
+      );
       setMenuData(mappedMenuItems);
       setIsMenuLoading(false);
     };
@@ -567,14 +722,54 @@ export default function OrderPage() {
 
   const openModifier = (item: MenuItem) => {
     setSelectedItem(item);
-    setSelectedSize("regular");
-    setSelectedMilk("whole");
+    setSelectedSize("solo");
+    setSelectedOptionIds(buildDefaultSelectedOptionIds(item));
     setIsModifierOpen(true);
   };
 
-  const addConfiguredItem = (item: MenuItem, size: SizeOption, milk: MilkOption) => {
-    const lineId = `${item.id}-${size}-${milk}`;
-    const unitPrice = calculateUnitPrice(item.price, size, milk);
+  const handleToggleModifierOption = (optionId: string) => {
+    if (!selectedItem) return;
+
+    const option = selectedItem.customizationOptions.find((entry) => entry.id === optionId);
+    if (!option) return;
+
+    setSelectedOptionIds((previousIds) => {
+      const selectedSet = new Set(previousIds);
+      const sameTypeOptions = selectedItem.customizationOptions
+        .filter((entry) => entry.optionType === option.optionType)
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+      const maxSelect = Math.max(...sameTypeOptions.map((entry) => entry.maxSelect), 1);
+      const isSelected = selectedSet.has(option.id);
+
+      if (isSelected) {
+        const hasOtherSelected = sameTypeOptions.some((entry) => entry.id !== option.id && selectedSet.has(entry.id));
+        if (option.required && !hasOtherSelected) {
+          return previousIds;
+        }
+        selectedSet.delete(option.id);
+      } else {
+        const selectedInType = sameTypeOptions.filter((entry) => selectedSet.has(entry.id));
+        if (maxSelect === 1) {
+          selectedInType.forEach((entry) => selectedSet.delete(entry.id));
+        } else if (selectedInType.length >= maxSelect) {
+          const firstSelected = selectedInType[0];
+          if (firstSelected) {
+            selectedSet.delete(firstSelected.id);
+          }
+        }
+        selectedSet.add(option.id);
+      }
+
+      return normalizeSelectedOptionIds(selectedItem, [...selectedSet]);
+    });
+  };
+
+  const addConfiguredItem = (item: MenuItem, size: SizeOption, optionIds: string[]) => {
+    const normalizedOptionIds = normalizeSelectedOptionIds(item, optionIds);
+    const selectedOptions = mapSelectedOptions(item, normalizedOptionIds);
+    const lineId = `${item.id}-${size}-${normalizedOptionIds.slice().sort().join(".") || "base"}`;
+    const unitPrice = calculateUnitPrice(item, size, selectedOptions);
+    const basePrice = size === "doppio" ? item.priceDoppio : item.priceSolo;
 
     setCartLines((prev) => {
       const existing = prev.find((line) => line.id === lineId);
@@ -585,11 +780,11 @@ export default function OrderPage() {
             id: lineId,
             itemId: item.id,
             name: item.name,
-            basePrice: item.price,
+            basePrice,
             unitPrice,
             quantity: 1,
             size,
-            milk,
+            selectedOptions,
             imageUrl: item.imageUrl ?? null
           }
         ];
@@ -606,14 +801,15 @@ export default function OrderPage() {
   const handleAddFromModifier = () => {
     if (!selectedItem) return;
 
-    addConfiguredItem(selectedItem, selectedSize, selectedMilk);
+    addConfiguredItem(selectedItem, selectedSize, selectedOptionIds);
     setIsModifierOpen(false);
     setSelectedItem(null);
+    setSelectedOptionIds([]);
     addToast("Added to cart!");
   };
 
   const quickAddDefault = (item: MenuItem) => {
-    addConfiguredItem(item, "regular", "whole");
+    addConfiguredItem(item, "solo", buildDefaultSelectedOptionIds(item));
     addToast("Added to cart!");
   };
 
@@ -681,7 +877,12 @@ export default function OrderPage() {
       unit_price: line.unitPrice,
       quantity: line.quantity,
       size: line.size,
-      milk: line.milk,
+      selected_options: line.selectedOptions.map((option) => ({
+        id: option.id,
+        name: option.name,
+        option_type: option.optionType,
+        extra_cost: option.extraCost
+      })),
       image_url: line.imageUrl ?? null
     }));
 
@@ -1055,13 +1256,14 @@ export default function OrderPage() {
               isOpen={isModifierOpen}
               item={selectedItem}
               size={selectedSize}
-              milk={selectedMilk}
+              selectedOptionIds={selectedOptionIds}
               finalPrice={modifierFinalPrice}
               onSizeChange={setSelectedSize}
-              onMilkChange={setSelectedMilk}
+              onToggleOption={handleToggleModifierOption}
               onClose={() => {
                 setIsModifierOpen(false);
                 setSelectedItem(null);
+                setSelectedOptionIds([]);
               }}
               onAddToCart={handleAddFromModifier}
             />
@@ -1070,7 +1272,6 @@ export default function OrderPage() {
               isOpen={isCartOpen}
               lines={cartLines}
               subtotal={subtotal}
-              serviceFee={serviceFee}
               grandTotal={grandTotal}
               isCheckingOut={isCheckingOut}
               pickupTime={pickupTime}

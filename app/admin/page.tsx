@@ -45,7 +45,7 @@ type NormalizedOrderItem = {
   unitPrice: number;
   menuItemId: string | null;
   size: string;
-  milk: string;
+  modifiers: string[];
 };
 
 type ColumnKey = "received" | "preparing" | "ready";
@@ -81,6 +81,8 @@ type MenuManagerItem = {
   name: string;
   description: string | null;
   base_price: number | string | null;
+  price_solo: number | string | null;
+  price_doppio: number | string | null;
   image_url: string | null;
   category: string | null;
 };
@@ -89,8 +91,43 @@ type NewMenuItemForm = {
   name: string;
   description: string;
   basePrice: string;
+  priceSolo: string;
+  priceDoppio: string;
   category: string;
 };
+
+type CustomizationOptionRow = {
+  id: string;
+  name: string;
+  option_type: string;
+  extra_cost: number | string;
+  active: boolean;
+};
+
+type MenuItemCustomizationLinkRow = {
+  id: string;
+  menu_item_id: string;
+  option_id: string;
+  sort_order: number | string;
+  required: boolean;
+  max_select: number | string;
+};
+
+type CustomizationOptionForm = {
+  name: string;
+  optionType: string;
+  extraCost: string;
+  active: boolean;
+};
+
+type CustomizationLinkForm = {
+  optionId: string;
+  required: boolean;
+  maxSelect: string;
+  sortOrder: string;
+};
+
+type MenuManagerSubview = "drinks" | "customizations";
 
 type MenuCategoryForm = {
   label: string;
@@ -200,7 +237,23 @@ const EMPTY_MENU_FORM: NewMenuItemForm = {
   name: "",
   description: "",
   basePrice: "",
+  priceSolo: "",
+  priceDoppio: "",
   category: DEFAULT_MENU_CATEGORY_KEY
+};
+
+const EMPTY_CUSTOMIZATION_OPTION_FORM: CustomizationOptionForm = {
+  name: "",
+  optionType: "other",
+  extraCost: "0",
+  active: true
+};
+
+const EMPTY_CUSTOMIZATION_LINK_FORM: CustomizationLinkForm = {
+  optionId: "",
+  required: false,
+  maxSelect: "1",
+  sortOrder: "10"
 };
 
 const EMPTY_MENU_CATEGORY_FORM: MenuCategoryForm = {
@@ -239,8 +292,14 @@ function parseMoney(value: number | string | null | undefined): number {
 }
 
 function normalizeMenuManagerItem(item: MenuManagerItem): MenuManagerItem {
+  const basePrice = parseMoney(item.base_price);
+  const soloPrice = parseMoney(item.price_solo);
+  const doppioPrice = parseMoney(item.price_doppio);
+
   return {
     ...item,
+    price_solo: soloPrice || basePrice,
+    price_doppio: doppioPrice || basePrice,
     category: normalizeMenuCategory(item.category)
   };
 }
@@ -306,8 +365,24 @@ function normalizeOrderItems(value: unknown): NormalizedOrderItem[] {
         : typeof item.menu_item_id === "string"
           ? item.menu_item_id.trim()
           : "";
-    const size = typeof item.size === "string" ? item.size : "regular";
-    const milk = typeof item.milk === "string" ? item.milk : "whole";
+    const size = typeof item.size === "string" ? item.size : "solo";
+    const selectedOptions = Array.isArray(item.selected_options)
+      ? item.selected_options
+      : Array.isArray(item.selectedOptions)
+        ? item.selectedOptions
+        : [];
+    const parsedSelectedOptions = selectedOptions
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string") {
+          return ((entry as { name: string }).name || "").trim();
+        }
+        return "";
+      })
+      .filter((entry): entry is string => Boolean(entry));
+
+    const legacyMilk = typeof item.milk === "string" && item.milk.trim() ? item.milk.trim() : "";
+    const modifiers = legacyMilk ? [legacyMilk, ...parsedSelectedOptions] : parsedSelectedOptions;
 
     return {
       name,
@@ -315,7 +390,7 @@ function normalizeOrderItems(value: unknown): NormalizedOrderItem[] {
       unitPrice,
       menuItemId: itemId || null,
       size,
-      milk
+      modifiers
     };
   });
 }
@@ -712,7 +787,7 @@ export default function AdminDashboardPage() {
 
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
   const [completedOrders, setCompletedOrders] = useState<DashboardOrder[]>([]);
-  const [filterMode, setFilterMode] = useState<FilterMode>("daily");
+  const [filterMode, setFilterMode] = useState<FilterMode>("monthly");
   const [selectedDay, setSelectedDay] = useState(getTodayDateInputValue);
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthInputValue);
   const [isLoading, setIsLoading] = useState(false);
@@ -728,6 +803,7 @@ export default function AdminDashboardPage() {
   const [isMenuLoading, setIsMenuLoading] = useState(false);
   const [menuError, setMenuError] = useState<string | null>(null);
   const [isAddMenuFormOpen, setIsAddMenuFormOpen] = useState(false);
+  const [menuManagerSubview, setMenuManagerSubview] = useState<MenuManagerSubview>("drinks");
   const [editingItem, setEditingItem] = useState<MenuManagerItem | null>(null);
   const [menuForm, setMenuForm] = useState<NewMenuItemForm>(EMPTY_MENU_FORM);
   const [isSavingMenuItem, setIsSavingMenuItem] = useState(false);
@@ -739,6 +815,18 @@ export default function AdminDashboardPage() {
   const [isMenuBucketImagesLoading, setIsMenuBucketImagesLoading] = useState(false);
   const [menuBucketImagesError, setMenuBucketImagesError] = useState<string | null>(null);
   const [deletingMenuItemId, setDeletingMenuItemId] = useState<string | null>(null);
+  const [customizationOptions, setCustomizationOptions] = useState<CustomizationOptionRow[]>([]);
+  const [menuItemCustomizationLinks, setMenuItemCustomizationLinks] = useState<MenuItemCustomizationLinkRow[]>([]);
+  const [isCustomizationLoading, setIsCustomizationLoading] = useState(false);
+  const [customizationError, setCustomizationError] = useState<string | null>(null);
+  const [isCustomizationOptionModalOpen, setIsCustomizationOptionModalOpen] = useState(false);
+  const [isCustomizationLinkModalOpen, setIsCustomizationLinkModalOpen] = useState(false);
+  const [customizationOptionForm, setCustomizationOptionForm] = useState<CustomizationOptionForm>(EMPTY_CUSTOMIZATION_OPTION_FORM);
+  const [customizationLinkForm, setCustomizationLinkForm] = useState<CustomizationLinkForm>(EMPTY_CUSTOMIZATION_LINK_FORM);
+  const [editingCustomizationOption, setEditingCustomizationOption] = useState<CustomizationOptionRow | null>(null);
+  const [isSavingCustomizationOption, setIsSavingCustomizationOption] = useState(false);
+  const [isLinkingCustomizationOption, setIsLinkingCustomizationOption] = useState(false);
+  const [activeCustomizationMenuItemId, setActiveCustomizationMenuItemId] = useState<string>("");
   const [expandedManagerCategories, setExpandedManagerCategories] = useState<Record<string, boolean>>({});
   const [menuCategories, setMenuCategories] = useState<MenuCategoryRow[]>([]);
   const [isMenuCategoriesLoading, setIsMenuCategoriesLoading] = useState(false);
@@ -1091,6 +1179,34 @@ export default function AdminDashboardPage() {
     return grouped;
   }, [managerCategories, menuItems]);
 
+  const customizationOptionsById = useMemo(() => {
+    const lookup = new Map<string, CustomizationOptionRow>();
+    customizationOptions.forEach((option) => {
+      lookup.set(option.id, option);
+    });
+    return lookup;
+  }, [customizationOptions]);
+
+  const customizationLinksByMenuItem = useMemo<Record<string, MenuItemCustomizationLinkRow[]>>(() => {
+    return menuItemCustomizationLinks.reduce<Record<string, MenuItemCustomizationLinkRow[]>>((acc, link) => {
+      if (!acc[link.menu_item_id]) {
+        acc[link.menu_item_id] = [];
+      }
+      acc[link.menu_item_id].push(link);
+      return acc;
+    }, {});
+  }, [menuItemCustomizationLinks]);
+
+  const linkableCustomizationOptions = useMemo(() => {
+    if (!activeCustomizationMenuItemId) return [];
+
+    const linkedOptionIds = new Set(
+      (customizationLinksByMenuItem[activeCustomizationMenuItemId] ?? []).map((link) => link.option_id)
+    );
+
+    return customizationOptions.filter((option) => !linkedOptionIds.has(option.id));
+  }, [activeCustomizationMenuItemId, customizationLinksByMenuItem, customizationOptions]);
+
   const activePromoSlide = useMemo(() => {
     if (!activePromoSlideId) return null;
     return todayAtBarForm.carouselSlides.find((slide) => slide.id === activePromoSlideId) ?? null;
@@ -1131,6 +1247,65 @@ export default function AdminDashboardPage() {
       isMounted = false;
     };
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let isMounted = true;
+
+    const loadCustomizations = async () => {
+      setIsCustomizationLoading(true);
+      setCustomizationError(null);
+
+      const [optionsResult, linksResult] = await Promise.all([
+        supabase
+          .from("menu_customization_options")
+          .select("id, name, option_type, extra_cost, active")
+          .order("option_type", { ascending: true })
+          .order("name", { ascending: true }),
+        supabase
+          .from("menu_item_customizations")
+          .select("id, menu_item_id, option_id, sort_order, required, max_select")
+          .order("sort_order", { ascending: true })
+      ]);
+
+      if (!isMounted) return;
+
+      if (optionsResult.error || linksResult.error) {
+        setCustomizationOptions([]);
+        setMenuItemCustomizationLinks([]);
+        setCustomizationError(
+          optionsResult.error?.message ||
+            linksResult.error?.message ||
+            "Unable to load customization options."
+        );
+        setIsCustomizationLoading(false);
+        return;
+      }
+
+      setCustomizationOptions(((optionsResult.data ?? []) as CustomizationOptionRow[]).map((option) => ({
+        ...option,
+        option_type: option.option_type || "other"
+      })));
+      setMenuItemCustomizationLinks((linksResult.data ?? []) as MenuItemCustomizationLinkRow[]);
+      setIsCustomizationLoading(false);
+    };
+
+    void loadCustomizations();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    setActiveCustomizationMenuItemId((previousMenuItemId) => {
+      if (previousMenuItemId && menuItems.some((menuItem) => menuItem.id === previousMenuItemId)) {
+        return previousMenuItemId;
+      }
+      return menuItems[0]?.id ?? "";
+    });
+  }, [menuItems]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1433,6 +1608,7 @@ export default function AdminDashboardPage() {
     setMenuCategories([]);
     setMenuCategoriesError(null);
     setIsAddMenuFormOpen(false);
+    setMenuManagerSubview("drinks");
     setEditingItem(null);
     setMenuForm(EMPTY_MENU_FORM);
     setUpdatingMenuImageId(null);
@@ -1443,6 +1619,18 @@ export default function AdminDashboardPage() {
     setMenuBucketImagesError(null);
     setIsMenuBucketImagesLoading(false);
     setDeletingMenuItemId(null);
+    setCustomizationOptions([]);
+    setMenuItemCustomizationLinks([]);
+    setIsCustomizationLoading(false);
+    setCustomizationError(null);
+    setIsCustomizationOptionModalOpen(false);
+    setIsCustomizationLinkModalOpen(false);
+    setCustomizationOptionForm(EMPTY_CUSTOMIZATION_OPTION_FORM);
+    setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
+    setEditingCustomizationOption(null);
+    setIsSavingCustomizationOption(false);
+    setIsLinkingCustomizationOption(false);
+    setActiveCustomizationMenuItemId("");
     setExpandedManagerCategories({});
     setIsMenuCategoriesLoading(false);
     setIsCategoryModalOpen(false);
@@ -1477,20 +1665,26 @@ export default function AdminDashboardPage() {
     });
   };
 
-  const toggleOrderCard = (orderId: string) => {
-    setCollapsedOrderIds((previousState) => ({
-      ...previousState,
-      [orderId]: !previousState[orderId]
-    }));
-  };
-
-  const togglePromotionalSlideCard = (slideId: string) => {
-    setCollapsedPromotionalSlideIds((previousState) => {
-      const isCurrentlyCollapsed = previousState[slideId] !== false;
+  const toggleOrderCard = (orderId: string, isOpen?: boolean) => {
+    setCollapsedOrderIds((previousState) => {
+      const isCurrentlyCollapsed = previousState[orderId] === true;
+      const nextIsCollapsed = typeof isOpen === "boolean" ? !isOpen : !isCurrentlyCollapsed;
 
       return {
         ...previousState,
-        [slideId]: !isCurrentlyCollapsed
+        [orderId]: nextIsCollapsed
+      };
+    });
+  };
+
+  const togglePromotionalSlideCard = (slideId: string, isOpen?: boolean) => {
+    setCollapsedPromotionalSlideIds((previousState) => {
+      const isCurrentlyCollapsed = previousState[slideId] !== false;
+      const nextIsCollapsed = typeof isOpen === "boolean" ? !isOpen : !isCurrentlyCollapsed;
+
+      return {
+        ...previousState,
+        [slideId]: nextIsCollapsed
       };
     });
   };
@@ -1773,10 +1967,16 @@ export default function AdminDashboardPage() {
 
   const handleStartEditMenuItem = (menuItem: MenuManagerItem) => {
     setEditingItem(menuItem);
+    const basePrice = parseMoney(menuItem.base_price);
+    const soloPrice = parseMoney(menuItem.price_solo);
+    const doppioPrice = parseMoney(menuItem.price_doppio);
+
     setMenuForm({
       name: menuItem.name,
       description: menuItem.description ?? "",
-      basePrice: String(parseMoney(menuItem.base_price)),
+      basePrice: String(basePrice),
+      priceSolo: String(soloPrice || basePrice),
+      priceDoppio: String(doppioPrice || basePrice),
       category: normalizeMenuCategory(menuItem.category)
     });
     setIsAddMenuFormOpen(true);
@@ -1795,6 +1995,8 @@ export default function AdminDashboardPage() {
     const nextName = menuForm.name.trim();
     const nextDescription = menuForm.description.trim();
     const nextPrice = Number(menuForm.basePrice);
+    const nextSoloPrice = Number(menuForm.priceSolo);
+    const nextDoppioPrice = Number(menuForm.priceDoppio);
     const nextCategory = normalizeMenuCategory(menuForm.category);
 
     if (!nextName) {
@@ -1807,6 +2009,16 @@ export default function AdminDashboardPage() {
       return;
     }
 
+    if (!Number.isFinite(nextSoloPrice) || nextSoloPrice < 0) {
+      setMenuError("Solo price must be a valid non-negative number.");
+      return;
+    }
+
+    if (!Number.isFinite(nextDoppioPrice) || nextDoppioPrice < 0) {
+      setMenuError("Doppio price must be a valid non-negative number.");
+      return;
+    }
+
     setIsSavingMenuItem(true);
     setMenuError(null);
 
@@ -1814,6 +2026,8 @@ export default function AdminDashboardPage() {
       name: nextName,
       description: nextDescription,
       base_price: nextPrice,
+      price_solo: nextSoloPrice,
+      price_doppio: nextDoppioPrice,
       category: nextCategory
     };
 
@@ -1979,6 +2193,252 @@ export default function AdminDashboardPage() {
       message: `Delete ${menuItem.name}? This cannot be undone.`,
       confirmLabel: "Delete",
       onConfirm: () => deleteMenuItem(menuItem)
+    });
+  };
+
+  const resetCustomizationOptionForm = () => {
+    setCustomizationOptionForm(EMPTY_CUSTOMIZATION_OPTION_FORM);
+    setEditingCustomizationOption(null);
+  };
+
+  const closeCustomizationOptionModal = () => {
+    if (isSavingCustomizationOption) return;
+    setIsCustomizationOptionModalOpen(false);
+    resetCustomizationOptionForm();
+  };
+
+  const openCreateCustomizationOptionModal = () => {
+    setCustomizationError(null);
+    resetCustomizationOptionForm();
+    setIsCustomizationOptionModalOpen(true);
+  };
+
+  const openEditCustomizationOptionModal = (option: CustomizationOptionRow) => {
+    setCustomizationError(null);
+    setEditingCustomizationOption(option);
+    setCustomizationOptionForm({
+      name: option.name,
+      optionType: option.option_type,
+      extraCost: String(parseMoney(option.extra_cost)),
+      active: option.active !== false
+    });
+    setIsCustomizationOptionModalOpen(true);
+  };
+
+  const closeCustomizationLinkModal = () => {
+    if (isLinkingCustomizationOption) return;
+    setIsCustomizationLinkModalOpen(false);
+    setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
+  };
+
+  const openCustomizationLinkModal = (menuItemId?: string) => {
+    if (menuItemId) {
+      setActiveCustomizationMenuItemId(menuItemId);
+    }
+    setCustomizationError(null);
+    setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
+    setIsCustomizationLinkModalOpen(true);
+  };
+
+  const handleSaveCustomizationOption = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isSavingCustomizationOption) return;
+
+    const nextName = customizationOptionForm.name.trim();
+    const nextType = customizationOptionForm.optionType.trim() || "other";
+    const nextExtraCost = Number(customizationOptionForm.extraCost);
+
+    if (!nextName) {
+      setCustomizationError("Customization option name is required.");
+      return;
+    }
+
+    if (!Number.isFinite(nextExtraCost) || nextExtraCost < 0) {
+      setCustomizationError("Customization extra cost must be a valid non-negative number.");
+      return;
+    }
+
+    setIsSavingCustomizationOption(true);
+    setCustomizationError(null);
+
+    const payload = {
+      name: nextName,
+      option_type: nextType,
+      extra_cost: nextExtraCost,
+      active: customizationOptionForm.active
+    };
+
+    const query = editingCustomizationOption
+      ? supabase
+          .from("menu_customization_options")
+          .update(payload)
+          .eq("id", editingCustomizationOption.id)
+          .select("id, name, option_type, extra_cost, active")
+          .maybeSingle()
+      : supabase
+          .from("menu_customization_options")
+          .insert([payload])
+          .select("id, name, option_type, extra_cost, active")
+          .single();
+
+    const { data, error } = await query;
+
+    if (error || !data) {
+      setCustomizationError(error?.message || "Unable to save customization option.");
+      setIsSavingCustomizationOption(false);
+      return;
+    }
+
+    const savedOption = data as CustomizationOptionRow;
+
+    setCustomizationOptions((previousOptions) => {
+      if (!editingCustomizationOption) {
+        return [...previousOptions, savedOption].sort((a, b) =>
+          `${a.option_type}:${a.name}`.localeCompare(`${b.option_type}:${b.name}`)
+        );
+      }
+
+      return previousOptions
+        .map((option) => (option.id === savedOption.id ? savedOption : option))
+        .sort((a, b) => `${a.option_type}:${a.name}`.localeCompare(`${b.option_type}:${b.name}`));
+    });
+
+    setIsSavingCustomizationOption(false);
+    resetCustomizationOptionForm();
+    setIsCustomizationOptionModalOpen(false);
+    setAdminNotice({ tone: "success", message: "Customization option saved." });
+  };
+
+  const handleDeleteCustomizationOption = (option: CustomizationOptionRow) => {
+    if (isSavingCustomizationOption) return;
+
+    openConfirmationModal({
+      title: "Delete Customization Option",
+      message: `Delete ${option.name}? This also removes linked references from menu items.`,
+      confirmLabel: "Delete",
+      onConfirm: async () => {
+        setIsSavingCustomizationOption(true);
+        setCustomizationError(null);
+
+        const { error } = await supabase.from("menu_customization_options").delete().eq("id", option.id);
+
+        if (error) {
+          setCustomizationError(error.message || "Unable to delete customization option.");
+          setIsSavingCustomizationOption(false);
+          return;
+        }
+
+        setCustomizationOptions((previousOptions) => previousOptions.filter((entry) => entry.id !== option.id));
+        setMenuItemCustomizationLinks((previousLinks) => previousLinks.filter((link) => link.option_id !== option.id));
+        if (editingCustomizationOption?.id === option.id) {
+          resetCustomizationOptionForm();
+        }
+        setIsSavingCustomizationOption(false);
+        setAdminNotice({ tone: "success", message: "Customization option deleted." });
+      }
+    });
+  };
+
+  const handleLinkCustomizationOption = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isLinkingCustomizationOption || !activeCustomizationMenuItemId) return;
+
+    const optionId = customizationLinkForm.optionId.trim();
+    const maxSelect = Math.max(1, Number(customizationLinkForm.maxSelect) || 1);
+    const sortOrder = Number(customizationLinkForm.sortOrder);
+
+    if (!optionId) {
+      setCustomizationError("Select a customization option to link.");
+      return;
+    }
+
+    if (!Number.isFinite(sortOrder)) {
+      setCustomizationError("Sort order must be a valid number.");
+      return;
+    }
+
+    setIsLinkingCustomizationOption(true);
+    setCustomizationError(null);
+
+    const { data, error } = await supabase
+      .from("menu_item_customizations")
+      .insert([
+        {
+          menu_item_id: activeCustomizationMenuItemId,
+          option_id: optionId,
+          sort_order: sortOrder,
+          required: customizationLinkForm.required,
+          max_select: maxSelect
+        }
+      ])
+      .select("id, menu_item_id, option_id, sort_order, required, max_select")
+      .single();
+
+    if (error || !data?.id) {
+      setCustomizationError(error?.message || "Unable to link customization option.");
+      setIsLinkingCustomizationOption(false);
+      return;
+    }
+
+    setMenuItemCustomizationLinks((previousLinks) => [...previousLinks, data as MenuItemCustomizationLinkRow]);
+    setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
+    setIsCustomizationLinkModalOpen(false);
+    setIsLinkingCustomizationOption(false);
+    setAdminNotice({ tone: "success", message: "Customization linked to menu item." });
+  };
+
+  const handleUpdateCustomizationLink = async (
+    link: MenuItemCustomizationLinkRow,
+    patch: Partial<Pick<MenuItemCustomizationLinkRow, "required" | "max_select" | "sort_order">>
+  ) => {
+    setCustomizationError(null);
+
+    const payload: Record<string, unknown> = {};
+    if (typeof patch.required === "boolean") {
+      payload.required = patch.required;
+    }
+    if (patch.max_select !== undefined) {
+      payload.max_select = Math.max(1, Number(patch.max_select) || 1);
+    }
+    if (patch.sort_order !== undefined) {
+      payload.sort_order = Number(patch.sort_order) || 0;
+    }
+
+    const { data, error } = await supabase
+      .from("menu_item_customizations")
+      .update(payload)
+      .eq("id", link.id)
+      .select("id, menu_item_id, option_id, sort_order, required, max_select")
+      .maybeSingle();
+
+    if (error || !data?.id) {
+      setCustomizationError(error?.message || "Unable to update customization link.");
+      return;
+    }
+
+    const updatedLink = data as MenuItemCustomizationLinkRow;
+    setMenuItemCustomizationLinks((previousLinks) =>
+      previousLinks.map((entry) => (entry.id === updatedLink.id ? updatedLink : entry))
+    );
+  };
+
+  const handleUnlinkCustomizationOption = (link: MenuItemCustomizationLinkRow) => {
+    openConfirmationModal({
+      title: "Remove Customization Link",
+      message: "Remove this customization option from the selected menu item?",
+      confirmLabel: "Remove",
+      onConfirm: async () => {
+        setCustomizationError(null);
+        const { error } = await supabase.from("menu_item_customizations").delete().eq("id", link.id);
+
+        if (error) {
+          setCustomizationError(error.message || "Unable to remove customization link.");
+          return;
+        }
+
+        setMenuItemCustomizationLinks((previousLinks) => previousLinks.filter((entry) => entry.id !== link.id));
+        setAdminNotice({ tone: "success", message: "Customization unlinked from menu item." });
+      }
     });
   };
 
@@ -2471,7 +2931,7 @@ export default function AdminDashboardPage() {
     return (
       <main className="barista-login-shell">
         <section className="barista-login-card" aria-label="Barista login">
-          <p className="barista-dashboard-kicker">Espressonism Ops</p>
+          <p className="barista-dashboard-kicker">Grit Coffee Ops</p>
           <h1>Barista Login</h1>
           <p className="barista-dashboard-copy">Enter your dashboard PIN to manage active orders and sales summary.</p>
 
@@ -2516,7 +2976,7 @@ export default function AdminDashboardPage() {
       <header className="barista-dashboard-header">
         <div className="barista-dashboard-header-main">
           <div className="barista-dashboard-header-top">
-            <p className="barista-dashboard-kicker">Espressonism Ops</p>
+            <p className="barista-dashboard-kicker">Grit Coffee Ops</p>
           </div>
           <h1>Barista Dashboard</h1>
           <p className="barista-dashboard-copy">Track all active cups from queue to handoff.</p>
@@ -2742,93 +3202,123 @@ export default function AdminDashboardPage() {
                       const isCardCollapsed = Boolean(collapsedOrderIds[order.id]) && isCollapsibleCard;
                       const orderDetailsId = `barista-order-details-${order.id}`;
 
+                      const orderDetailsContent = (
+                        <div className="barista-order-details" id={orderDetailsId}>
+                          {isDelivery ? (
+                            <p className="barista-note-box">
+                              <span className="barista-meta-chip">Delivery</span>
+                              {order.delivery_address?.trim() || "No delivery address provided"}
+                            </p>
+                          ) : null}
+
+                          <div className="barista-meta-row">
+                            <span className="barista-meta-line">
+                              <span className="barista-meta-chip">Payment</span>
+                              <span className="barista-meta-value">{paymentLabel(order.payment_method)}</span>
+                            </span>
+                            {isGcash ? <strong>Ref: {order.gcash_reference?.trim() || "Pending"}</strong> : <strong>Pay at Counter</strong>}
+                          </div>
+
+                          <div className="barista-meta-row">
+                            <span className="barista-meta-line">
+                              <span className="barista-meta-chip">Pickup</span>
+                              <span className="barista-meta-value">{pickupTimeLabel}</span>
+                            </span>
+                            <strong>Placed: {formatOrderDateTime(order.created_at)}</strong>
+                          </div>
+
+                          {specialInstructions ? (
+                            <p className="barista-note-box">
+                              <span className="barista-meta-chip">Notes</span>
+                              {specialInstructions}
+                            </p>
+                          ) : null}
+
+                          <ul className="barista-items-list" aria-label="Order items">
+                            {items.length === 0 ? (
+                              <li className="barista-item-row">No item details provided.</li>
+                            ) : (
+                              items.map((item, index) => {
+                                const lineTotal = item.quantity * item.unitPrice;
+                                const meta = item.modifiers.length > 0
+                                  ? `${item.size} / ${item.modifiers.join(", ")}`
+                                  : item.size;
+
+                                return (
+                                  <li key={`${order.id}-item-${index}`} className="barista-item-row">
+                                    <div>
+                                      <p className="barista-item-main">
+                                        {item.quantity}x {item.name}
+                                      </p>
+                                      <p className="barista-item-sub">{meta}</p>
+                                    </div>
+                                    <strong>{formatCurrency(lineTotal)}</strong>
+                                  </li>
+                                );
+                              })
+                            )}
+                          </ul>
+
+                          <p className="barista-total-row">
+                            <span>Total</span>
+                            <strong>{formatCurrency(order.total_price)}</strong>
+                          </p>
+
+                          {actionConfig ? (
+                            <button
+                              type="button"
+                              className="barista-action-btn"
+                              onClick={() => void updateOrderStatus(order.id, actionConfig.nextStatus)}
+                              disabled={isUpdating}
+                            >
+                              {isUpdating ? "Updating..." : actionConfig.label}
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+
                       return (
                         <article key={order.id} className="barista-order-card">
-                          <div className="barista-order-head">
-                            <div>
-                              <h3>{order.customer_name?.trim() || "Walk-in Customer"}</h3>
-                              <p>{order.customer_phone?.trim() || "No phone provided"}</p>
-                            </div>
+                          {isCollapsibleCard ? (
+                            <details
+                              className="barista-order-accordion"
+                              open={!isCardCollapsed}
+                              onToggle={(event) => toggleOrderCard(order.id, event.currentTarget.open)}
+                            >
+                              <summary className="barista-order-head barista-order-head-summary">
+                                <div>
+                                  <h3>{order.customer_name?.trim() || "Walk-in Customer"}</h3>
+                                  <p>{order.customer_phone?.trim() || "No phone provided"}</p>
+                                </div>
 
-                            <div className="barista-order-head-actions">
-                              <span className={`barista-badge ${isDelivery ? "barista-badge-delivery" : "barista-badge-pickup"}`}>
-                                {orderTypeLabel(order.order_type)}
-                              </span>
+                                <div className="barista-order-head-actions">
+                                  <span className={`barista-badge ${isDelivery ? "barista-badge-delivery" : "barista-badge-pickup"}`}>
+                                    {orderTypeLabel(order.order_type)}
+                                  </span>
+                                  <span className="barista-order-summary-state">{isCardCollapsed ? "Expand" : "Collapse"}</span>
+                                </div>
+                              </summary>
 
-                              {isCollapsibleCard ? (
-                                <button
-                                  type="button"
-                                  className="barista-order-collapse-btn"
-                                  aria-expanded={!isCardCollapsed}
-                                  aria-controls={orderDetailsId}
-                                  onClick={() => toggleOrderCard(order.id)}
-                                >
-                                  {isCardCollapsed ? "Expand" : "Collapse"}
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
+                              {orderDetailsContent}
+                            </details>
+                          ) : (
+                            <>
+                              <div className="barista-order-head">
+                                <div>
+                                  <h3>{order.customer_name?.trim() || "Walk-in Customer"}</h3>
+                                  <p>{order.customer_phone?.trim() || "No phone provided"}</p>
+                                </div>
 
-                          <div id={orderDetailsId} hidden={isCardCollapsed}>
-                            {isDelivery ? (
-                              <p className="barista-delivery-address">
-                                Deliver to: {order.delivery_address?.trim() || "No delivery address provided"}
-                              </p>
-                            ) : null}
+                                <div className="barista-order-head-actions">
+                                  <span className={`barista-badge ${isDelivery ? "barista-badge-delivery" : "barista-badge-pickup"}`}>
+                                    {orderTypeLabel(order.order_type)}
+                                  </span>
+                                </div>
+                              </div>
 
-                            <div className="barista-meta-row">
-                              <span>Payment: {paymentLabel(order.payment_method)}</span>
-                              {isGcash ? <strong>Ref: {order.gcash_reference?.trim() || "Pending"}</strong> : <strong>Pay at Counter</strong>}
-                            </div>
-
-                            <div className="barista-meta-row">
-                              <span>Pickup Time: {pickupTimeLabel}</span>
-                              <strong>Placed: {formatOrderDateTime(order.created_at)}</strong>
-                            </div>
-
-                            {specialInstructions ? (
-                              <p className="barista-delivery-address">Special instructions: {specialInstructions}</p>
-                            ) : null}
-
-                            <ul className="barista-items-list" aria-label="Order items">
-                              {items.length === 0 ? (
-                                <li className="barista-item-row">No item details provided.</li>
-                              ) : (
-                                items.map((item, index) => {
-                                  const lineTotal = item.quantity * item.unitPrice;
-                                  const meta = `${item.size} / ${item.milk}`;
-
-                                  return (
-                                    <li key={`${order.id}-item-${index}`} className="barista-item-row">
-                                      <div>
-                                        <p className="barista-item-main">
-                                          {item.quantity}x {item.name}
-                                        </p>
-                                        <p className="barista-item-sub">{meta}</p>
-                                      </div>
-                                      <strong>{formatCurrency(lineTotal)}</strong>
-                                    </li>
-                                  );
-                                })
-                              )}
-                            </ul>
-
-                            <p className="barista-total-row">
-                              <span>Total</span>
-                              <strong>{formatCurrency(order.total_price)}</strong>
-                            </p>
-
-                            {actionConfig ? (
-                              <button
-                                type="button"
-                                className="barista-action-btn"
-                                onClick={() => void updateOrderStatus(order.id, actionConfig.nextStatus)}
-                                disabled={isUpdating}
-                              >
-                                {isUpdating ? "Updating..." : actionConfig.label}
-                              </button>
-                            ) : null}
-                          </div>
+                              {orderDetailsContent}
+                            </>
+                          )}
                         </article>
                       );
                     })}
@@ -2848,24 +3338,52 @@ export default function AdminDashboardPage() {
             <div>
               <p className="barista-dashboard-kicker">Owner CMS</p>
               <h2>Menu Manager</h2>
-              <p>Manage categories and drinks in one section.</p>
+              <p>
+                {menuManagerSubview === "drinks"
+                  ? "Manage categories and drinks in one section."
+                  : "Manage drink customization options and linked modifiers."}
+              </p>
             </div>
 
             <div className="barista-manager-head-actions">
-              <button type="button" className="barista-manager-toggle" onClick={openManageCategoriesModal}>
-                Manage Categories
-              </button>
+              <nav className="barista-tab-nav barista-menu-subview-nav" aria-label="Menu manager sections">
+                <button
+                  type="button"
+                  className={`barista-tab-btn ${menuManagerSubview === "drinks" ? "barista-tab-btn-active" : ""}`}
+                  onClick={() => setMenuManagerSubview("drinks")}
+                  aria-pressed={menuManagerSubview === "drinks"}
+                >
+                  Drinks
+                </button>
 
-              <button type="button" className="barista-manager-toggle" onClick={openCreateMenuForm}>
-                Add New Drink
-              </button>
+                <button
+                  type="button"
+                  className={`barista-tab-btn ${menuManagerSubview === "customizations" ? "barista-tab-btn-active" : ""}`}
+                  onClick={() => setMenuManagerSubview("customizations")}
+                  aria-pressed={menuManagerSubview === "customizations"}
+                >
+                  Customizations
+                </button>
+              </nav>
+
+              {menuManagerSubview === "drinks" ? (
+                <>
+                  <button type="button" className="barista-manager-toggle" onClick={openManageCategoriesModal}>
+                    Manage Categories
+                  </button>
+
+                  <button type="button" className="barista-manager-toggle" onClick={openCreateMenuForm}>
+                    Add New Drink
+                  </button>
+                </>
+              ) : null}
             </div>
           </header>
 
           {menuCategoriesError ? <p className="barista-state barista-state-error">{menuCategoriesError}</p> : null}
           {menuError ? <p className="barista-state barista-state-error">{menuError}</p> : null}
 
-          {isMenuLoading || isMenuCategoriesLoading || isHighlightsLoading ? (
+          {menuManagerSubview === "drinks" && (isMenuLoading || isMenuCategoriesLoading || isHighlightsLoading) ? (
             <div className="barista-menu-table-wrap" aria-label="Loading menu manager" aria-busy="true">
               <SkeletonPageSection titleWidth="36%" lineCount={2} lineWidths={["52%", "70%"]} />
               {Array.from({ length: 5 }).map((_, index) => (
@@ -2876,7 +3394,9 @@ export default function AdminDashboardPage() {
                 />
               ))}
             </div>
-          ) : (
+          ) : null}
+
+          {menuManagerSubview === "drinks" ? (
             <div className="barista-category-accordion-list" aria-label="Menu categories and items">
               {managerCategories.length === 0 ? <p className="barista-empty">No active categories yet.</p> : null}
 
@@ -2911,7 +3431,7 @@ export default function AdminDashboardPage() {
                                 <tr>
                                   <th>Name</th>
                                   <th>Description</th>
-                                  <th>Price</th>
+                                  <th>Solo / Doppio</th>
                                   <th>Image</th>
                                   <th className="barista-table-action-cell">Action</th>
                                 </tr>
@@ -2925,7 +3445,11 @@ export default function AdminDashboardPage() {
                                     <tr key={menuItem.id}>
                                       <td>{menuItem.name}</td>
                                       <td>{menuItem.description?.trim() || "No description"}</td>
-                                      <td>{formatCurrency(parseMoney(menuItem.base_price))}</td>
+                                      <td>
+                                        {formatCurrency(parseMoney(menuItem.price_solo || menuItem.base_price))}
+                                        {" / "}
+                                        {formatCurrency(parseMoney(menuItem.price_doppio || menuItem.base_price))}
+                                      </td>
                                       <td>
                                         <button
                                           type="button"
@@ -2967,7 +3491,225 @@ export default function AdminDashboardPage() {
                 );
               })}
             </div>
-          )}
+          ) : null}
+
+          {menuManagerSubview === "customizations" ? (
+            <section className="inventory-panel" aria-label="Drink customizations manager">
+              <header className="barista-manager-head inventory-panel-head-row">
+                <div>
+                  <h3 className="inventory-panel-title">Drink Customizations</h3>
+                  <p>Manage your option catalog, then link options to each drink as needed.</p>
+                </div>
+
+                <div className="barista-manager-head-actions">
+                  <button type="button" className="barista-manager-toggle" onClick={openCreateCustomizationOptionModal}>
+                    Add Option
+                  </button>
+                  <button
+                    type="button"
+                    className="barista-manager-toggle"
+                    onClick={() => openCustomizationLinkModal()}
+                    disabled={!activeCustomizationMenuItemId || linkableCustomizationOptions.length === 0}
+                  >
+                    Link Option
+                  </button>
+                </div>
+              </header>
+
+              {customizationError ? <p className="barista-state barista-state-error">{customizationError}</p> : null}
+
+              {isCustomizationLoading ? (
+                <div className="barista-menu-table-wrap" aria-label="Loading customizations" aria-busy="true">
+                  <SkeletonPageSection titleWidth="34%" lineCount={1} lineWidths={["56%"]} />
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <SkeletonTableRow
+                      key={`customization-skeleton-${index}`}
+                      columns={4}
+                      columnWidths={["30%", "22%", "18%", "18%"]}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <form className="barista-manager-form" onSubmit={(event) => event.preventDefault()}>
+                    <div className="barista-manager-form-grid">
+                      <label className="barista-form-field" htmlFor="customizationMenuItemSelect">
+                        Active Menu Item
+                        <select
+                          id="customizationMenuItemSelect"
+                          value={activeCustomizationMenuItemId}
+                          onChange={(event) => {
+                            setActiveCustomizationMenuItemId(event.target.value);
+                            setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
+                          }}
+                          disabled={menuItems.length === 0}
+                        >
+                          {menuItems.length > 0 ? (
+                            menuItems.map((menuItem) => (
+                              <option key={menuItem.id} value={menuItem.id}>
+                                {menuItem.name}
+                              </option>
+                            ))
+                          ) : (
+                            <option value="">No menu items available</option>
+                          )}
+                        </select>
+                      </label>
+
+                      <div className="barista-form-field">
+                        <span>Link Status</span>
+                        <p className="barista-image-helper">
+                          {linkableCustomizationOptions.length > 0
+                            ? `${linkableCustomizationOptions.length} option${linkableCustomizationOptions.length === 1 ? "" : "s"} available to link.`
+                            : "No available options left to link for this menu item."}
+                        </p>
+                      </div>
+                    </div>
+                  </form>
+
+                  <div className="barista-customization-grid" aria-label="Customization tables">
+                    <article className="barista-customization-table-panel">
+                      <header className="barista-customization-table-head">
+                        <h4>Option Catalog</h4>
+                        <p>All customization options available for linking.</p>
+                      </header>
+
+                      <div className="barista-menu-table-wrap barista-customization-table-wrap">
+                        <table className="barista-menu-table" aria-label="Customization options">
+                          <thead>
+                            <tr>
+                              <th>Name</th>
+                              <th>Type</th>
+                              <th>Extra Cost</th>
+                              <th className="barista-table-action-cell">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {customizationOptions.length === 0 ? (
+                              <tr>
+                                <td colSpan={4}>No customization options yet.</td>
+                              </tr>
+                            ) : (
+                              customizationOptions.map((option) => (
+                                <tr key={option.id}>
+                                  <td>{option.name}</td>
+                                  <td>{formatMenuCategoryLabel(option.option_type)}</td>
+                                  <td>{formatCurrency(parseMoney(option.extra_cost))}</td>
+                                  <td className="barista-menu-actions">
+                                    <button
+                                      type="button"
+                                      className="barista-menu-edit-btn"
+                                      onClick={() => openEditCustomizationOptionModal(option)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="barista-menu-image-btn"
+                                      onClick={() => openCustomizationLinkModal(activeCustomizationMenuItemId || undefined)}
+                                      disabled={!activeCustomizationMenuItemId || !linkableCustomizationOptions.some((entry) => entry.id === option.id)}
+                                    >
+                                      Link
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="barista-danger-btn"
+                                      onClick={() => handleDeleteCustomizationOption(option)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+
+                    <article className="barista-customization-table-panel">
+                      <header className="barista-customization-table-head">
+                        <h4>Linked to Active Drink</h4>
+                        <p>Configure required, max select, sort order, and unlink.</p>
+                      </header>
+
+                      <div className="barista-menu-table-wrap barista-customization-table-wrap">
+                        <table className="barista-menu-table" aria-label="Menu item customization links">
+                          <thead>
+                            <tr>
+                              <th>Option</th>
+                              <th>Required</th>
+                              <th>Max Select</th>
+                              <th>Sort</th>
+                              <th className="barista-table-action-cell">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(customizationLinksByMenuItem[activeCustomizationMenuItemId] ?? []).length === 0 ? (
+                              <tr>
+                                <td colSpan={5}>No linked options for this menu item.</td>
+                              </tr>
+                            ) : (
+                              [...(customizationLinksByMenuItem[activeCustomizationMenuItemId] ?? [])]
+                                .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
+                                .map((link) => {
+                                  const option = customizationOptionsById.get(link.option_id);
+
+                                  return (
+                                    <tr key={link.id}>
+                                      <td>{option?.name ?? "Unknown option"}</td>
+                                      <td>
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(link.required)}
+                                          onChange={(event) => {
+                                            void handleUpdateCustomizationLink(link, { required: event.target.checked });
+                                          }}
+                                        />
+                                      </td>
+                                      <td>
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          step="1"
+                                          value={String(Number(link.max_select) || 1)}
+                                          onChange={(event) => {
+                                            void handleUpdateCustomizationLink(link, { max_select: Number(event.target.value) || 1 });
+                                          }}
+                                        />
+                                      </td>
+                                      <td>
+                                        <input
+                                          type="number"
+                                          step="1"
+                                          value={String(Number(link.sort_order) || 0)}
+                                          onChange={(event) => {
+                                            void handleUpdateCustomizationLink(link, { sort_order: Number(event.target.value) || 0 });
+                                          }}
+                                        />
+                                      </td>
+                                      <td className="barista-menu-actions">
+                                        <button
+                                          type="button"
+                                          className="barista-danger-btn"
+                                          onClick={() => handleUnlinkCustomizationOption(link)}
+                                        >
+                                          Unlink
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+                  </div>
+                </>
+              )}
+            </section>
+          ) : null}
         </section>
       ) : null}
 
@@ -2977,7 +3719,7 @@ export default function AdminDashboardPage() {
             <div>
               <p className="barista-dashboard-kicker">Owner CMS</p>
               <h2>Promotional</h2>
-              <p>Manage homepage promo carousel settings and slides.</p>
+              <p>Manage homepage promo accordion items and image content.</p>
             </div>
           </header>
 
@@ -3030,40 +3772,35 @@ export default function AdminDashboardPage() {
                   />
                 </label>
 
-                <div className="barista-form-field barista-form-field-full" aria-label="Carousel slides editor">
-                  <span>Carousel Slides</span>
+                <div className="barista-form-field barista-form-field-full" aria-label="Promo accordion editor">
+                  <span>Accordion Items</span>
                   <p className="barista-image-helper">
-                    Add one or more slides. Only slides with an image URL are saved.
+                    Add one or more accordion items. Only items with an image URL are saved.
                   </p>
 
                   {todayAtBarForm.carouselSlides.length === 0 ? (
-                    <p className="barista-image-helper">No slides added yet.</p>
+                    <p className="barista-image-helper">No accordion items added yet.</p>
                   ) : (
                     todayAtBarForm.carouselSlides.map((slide, index) => {
                       const isSlideCollapsed = collapsedPromotionalSlideIds[slide.id] !== false;
 
                       return (
-                      <article key={slide.id} className="barista-promo-slide-card">
-                        <header className="barista-promo-slide-card-head">
-                          <h3 className="barista-promo-slide-card-title">Slide {index + 1}</h3>
-                          <button
-                            type="button"
-                            className="barista-order-collapse-btn barista-promo-slide-collapse-btn"
-                            aria-expanded={!isSlideCollapsed}
-                            aria-controls={`todayBarSlideFields-${slide.id}`}
-                            onClick={() => togglePromotionalSlideCard(slide.id)}
-                          >
+                      <details
+                        key={slide.id}
+                        className="barista-promo-slide-card"
+                        open={!isSlideCollapsed}
+                        onToggle={(event) => togglePromotionalSlideCard(slide.id, event.currentTarget.open)}
+                      >
+                        <summary className="barista-promo-slide-card-head">
+                          <h3 className="barista-promo-slide-card-title">Item {index + 1}</h3>
+                          <span className="barista-promo-slide-summary-state">
                             {isSlideCollapsed ? "Expand" : "Collapse"}
-                          </button>
-                        </header>
+                          </span>
+                        </summary>
 
-                        <div
-                          id={`todayBarSlideFields-${slide.id}`}
-                          className="barista-manager-form-grid barista-promo-slide-fields"
-                          hidden={isSlideCollapsed}
-                        >
+                        <div className="barista-manager-form-grid barista-promo-slide-fields">
                           <label className="barista-form-field barista-form-field-full" htmlFor={`todayBarSlideImage-${slide.id}`}>
-                            Slide {index + 1} Image URL
+                            Item {index + 1} Image URL
                             <div className="barista-promo-slide-image-actions">
                               <button
                                 type="button"
@@ -3086,7 +3823,7 @@ export default function AdminDashboardPage() {
                           </label>
 
                           <label className="barista-form-field" htmlFor={`todayBarSlideTitle-${slide.id}`}>
-                            Slide Title (Optional)
+                            Item Title (Optional)
                             <input
                               id={`todayBarSlideTitle-${slide.id}`}
                               type="text"
@@ -3099,7 +3836,7 @@ export default function AdminDashboardPage() {
                           </label>
 
                           <label className="barista-form-field" htmlFor={`todayBarSlideDescription-${slide.id}`}>
-                            Slide Description (Optional)
+                            Item Description (Optional)
                             <input
                               id={`todayBarSlideDescription-${slide.id}`}
                               type="text"
@@ -3111,21 +3848,17 @@ export default function AdminDashboardPage() {
                             />
                           </label>
 
-                          <button
-                            type="button"
-                            className="barista-danger-btn"
-                            onClick={() => handleRemoveTodayAtBarSlide(slide.id)}
-                          >
-                            Remove Slide
+                          <button type="button" className="barista-danger-btn" onClick={() => handleRemoveTodayAtBarSlide(slide.id)}>
+                            Remove Item
                           </button>
                         </div>
-                      </article>
+                      </details>
                       );
                     })
                   )}
 
                   <button type="button" className="barista-logout-btn" onClick={handleAddTodayAtBarSlide}>
-                    Add Slide
+                    Add Item
                   </button>
                 </div>
               </div>
@@ -3159,8 +3892,8 @@ export default function AdminDashboardPage() {
                   value={filterMode}
                   onChange={(event) => setFilterMode(event.target.value === "monthly" ? "monthly" : "daily")}
                 >
-                  <option value="daily">Daily View</option>
                   <option value="monthly">Monthly View</option>
+                  <option value="daily">Daily View</option>
                 </select>
               </label>
 
@@ -3360,6 +4093,34 @@ export default function AdminDashboardPage() {
                     value={menuForm.basePrice}
                     onChange={(event) => setMenuForm((previousForm) => ({ ...previousForm, basePrice: event.target.value }))}
                     placeholder="145"
+                    required
+                  />
+                </label>
+
+                <label className="barista-form-field" htmlFor="menuItemPriceSolo">
+                  Solo Price (PHP)
+                  <input
+                    id="menuItemPriceSolo"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={menuForm.priceSolo}
+                    onChange={(event) => setMenuForm((previousForm) => ({ ...previousForm, priceSolo: event.target.value }))}
+                    placeholder="145"
+                    required
+                  />
+                </label>
+
+                <label className="barista-form-field" htmlFor="menuItemPriceDoppio">
+                  Doppio Price (PHP)
+                  <input
+                    id="menuItemPriceDoppio"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={menuForm.priceDoppio}
+                    onChange={(event) => setMenuForm((previousForm) => ({ ...previousForm, priceDoppio: event.target.value }))}
+                    placeholder="170"
                     required
                   />
                 </label>
@@ -3589,6 +4350,270 @@ export default function AdminDashboardPage() {
 
                 <button type="submit" className="barista-action-btn barista-manager-submit" disabled={isSavingCategory}>
                   {isSavingCategory ? "Saving..." : editingCategory ? "Save Changes" : "Create Category"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {isCustomizationOptionModalOpen ? (
+        <div className="barista-image-modal-backdrop" role="presentation" onClick={closeCustomizationOptionModal}>
+          <section
+            className="barista-image-modal barista-manager-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={editingCustomizationOption ? `Edit ${editingCustomizationOption.name}` : "Add customization option"}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="barista-image-modal-head">
+              <div>
+                <p className="barista-dashboard-kicker">Menu Customizations</p>
+                <h3>{editingCustomizationOption ? "Edit Option" : "Add Option"}</h3>
+              </div>
+
+              <button
+                type="button"
+                className="barista-image-modal-close"
+                onClick={closeCustomizationOptionModal}
+                aria-label="Close customization option form"
+              >
+                X
+              </button>
+            </header>
+
+            <form className="barista-manager-form" onSubmit={handleSaveCustomizationOption}>
+              <div className="barista-manager-form-grid">
+                <label className="barista-form-field" htmlFor="customizationOptionName">
+                  Option Name
+                  <input
+                    id="customizationOptionName"
+                    type="text"
+                    value={customizationOptionForm.name}
+                    onChange={(event) =>
+                      setCustomizationOptionForm((previousForm) => ({
+                        ...previousForm,
+                        name: event.target.value
+                      }))
+                    }
+                    placeholder="Oat Milk"
+                    required
+                  />
+                </label>
+
+                <label className="barista-form-field" htmlFor="customizationOptionType">
+                  Option Type
+                  <select
+                    id="customizationOptionType"
+                    value={customizationOptionForm.optionType}
+                    onChange={(event) =>
+                      setCustomizationOptionForm((previousForm) => ({
+                        ...previousForm,
+                        optionType: event.target.value
+                      }))
+                    }
+                  >
+                    <option value="milk">Milk</option>
+                    <option value="syrup">Syrup</option>
+                    <option value="topping">Topping</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+
+                <label className="barista-form-field" htmlFor="customizationOptionExtraCost">
+                  Extra Cost (PHP)
+                  <input
+                    id="customizationOptionExtraCost"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={customizationOptionForm.extraCost}
+                    onChange={(event) =>
+                      setCustomizationOptionForm((previousForm) => ({
+                        ...previousForm,
+                        extraCost: event.target.value
+                      }))
+                    }
+                  />
+                </label>
+
+                <label className="barista-form-field barista-form-field-toggle" htmlFor="customizationOptionActive">
+                  <input
+                    id="customizationOptionActive"
+                    type="checkbox"
+                    checked={customizationOptionForm.active}
+                    onChange={(event) =>
+                      setCustomizationOptionForm((previousForm) => ({
+                        ...previousForm,
+                        active: event.target.checked
+                      }))
+                    }
+                  />
+                  <span>Active</span>
+                </label>
+              </div>
+
+              {customizationError ? <p className="barista-state barista-state-error">{customizationError}</p> : null}
+
+              <div className="barista-manager-actions">
+                <button type="button" className="barista-logout-btn" onClick={closeCustomizationOptionModal}>
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="barista-action-btn barista-manager-submit"
+                  disabled={isSavingCustomizationOption}
+                >
+                  {isSavingCustomizationOption
+                    ? "Saving..."
+                    : editingCustomizationOption
+                      ? "Update Option"
+                      : "Add Option"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {isCustomizationLinkModalOpen ? (
+        <div className="barista-image-modal-backdrop" role="presentation" onClick={closeCustomizationLinkModal}>
+          <section
+            className="barista-image-modal barista-manager-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Link customization option"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="barista-image-modal-head">
+              <div>
+                <p className="barista-dashboard-kicker">Menu Customizations</p>
+                <h3>Link Option to Drink</h3>
+              </div>
+
+              <button
+                type="button"
+                className="barista-image-modal-close"
+                onClick={closeCustomizationLinkModal}
+                aria-label="Close customization link form"
+              >
+                X
+              </button>
+            </header>
+
+            <form className="barista-manager-form" onSubmit={handleLinkCustomizationOption}>
+              <div className="barista-manager-form-grid">
+                <label className="barista-form-field" htmlFor="customizationLinkMenuItemSelect">
+                  Menu Item
+                  <select
+                    id="customizationLinkMenuItemSelect"
+                    value={activeCustomizationMenuItemId}
+                    onChange={(event) => {
+                      setActiveCustomizationMenuItemId(event.target.value);
+                      setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
+                    }}
+                    disabled={menuItems.length === 0}
+                  >
+                    {menuItems.length > 0 ? (
+                      menuItems.map((menuItem) => (
+                        <option key={menuItem.id} value={menuItem.id}>
+                          {menuItem.name}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No menu items available</option>
+                    )}
+                  </select>
+                </label>
+
+                <label className="barista-form-field" htmlFor="customizationLinkSelect">
+                  Option
+                  <select
+                    id="customizationLinkSelect"
+                    value={customizationLinkForm.optionId}
+                    onChange={(event) =>
+                      setCustomizationLinkForm((previousForm) => ({
+                        ...previousForm,
+                        optionId: event.target.value
+                      }))
+                    }
+                    disabled={!activeCustomizationMenuItemId || linkableCustomizationOptions.length === 0}
+                    required
+                  >
+                    <option value="">Select option</option>
+                    {linkableCustomizationOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.name} ({formatMenuCategoryLabel(option.option_type)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="barista-form-field" htmlFor="customizationLinkMaxSelect">
+                  Max Select
+                  <input
+                    id="customizationLinkMaxSelect"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={customizationLinkForm.maxSelect}
+                    onChange={(event) =>
+                      setCustomizationLinkForm((previousForm) => ({
+                        ...previousForm,
+                        maxSelect: event.target.value
+                      }))
+                    }
+                    required
+                  />
+                </label>
+
+                <label className="barista-form-field" htmlFor="customizationLinkSortOrder">
+                  Sort Order
+                  <input
+                    id="customizationLinkSortOrder"
+                    type="number"
+                    step="1"
+                    value={customizationLinkForm.sortOrder}
+                    onChange={(event) =>
+                      setCustomizationLinkForm((previousForm) => ({
+                        ...previousForm,
+                        sortOrder: event.target.value
+                      }))
+                    }
+                    required
+                  />
+                </label>
+
+                <label className="barista-form-field barista-form-field-toggle barista-form-field-full" htmlFor="customizationLinkRequired">
+                  <input
+                    id="customizationLinkRequired"
+                    type="checkbox"
+                    checked={customizationLinkForm.required}
+                    onChange={(event) =>
+                      setCustomizationLinkForm((previousForm) => ({
+                        ...previousForm,
+                        required: event.target.checked
+                      }))
+                    }
+                  />
+                  <span>Required option group</span>
+                </label>
+              </div>
+
+              {customizationError ? <p className="barista-state barista-state-error">{customizationError}</p> : null}
+
+              <div className="barista-manager-actions">
+                <button type="button" className="barista-logout-btn" onClick={closeCustomizationLinkModal}>
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="barista-action-btn barista-manager-submit"
+                  disabled={isLinkingCustomizationOption || !activeCustomizationMenuItemId || !customizationLinkForm.optionId}
+                >
+                  {isLinkingCustomizationOption ? "Linking..." : "Link Option"}
                 </button>
               </div>
             </form>

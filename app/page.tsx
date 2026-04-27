@@ -298,7 +298,7 @@ export default function Home() {
       <Hero
         title="Brew Loud."
         subtitle="Small Batch | City Roasted"
-        description="Espressonism turns coffee into a daily ceremony. Precision extraction, expressive flavor notes, and a space designed for people who love bold craft."
+        description="Grit Coffee turns coffee into a daily ceremony. Precision extraction, expressive flavor notes, and a space designed for people who love bold craft."
         cardClassName="hero-card--promo"
         actions={[
           { label: "Explore Signature Drinks", variant: "primary", onClick: handleExploreSignature },
@@ -391,7 +391,7 @@ export default function Home() {
                         height: "100%",
                         display: "grid",
                         placeItems: "center",
-                        color: "#7a472a",
+                        color: "#23263b",
                         fontWeight: 700,
                         fontSize: "0.86rem",
                         letterSpacing: "0.04em",
@@ -413,7 +413,7 @@ export default function Home() {
         </div>
       </Section>
 
-      <Section id="gallery" title="Gallery" description="Fresh drops from Espressonism straight from Instagram.">
+      <Section id="gallery" title="Gallery" description="Fresh drops from Grit Coffee straight from Instagram.">
         <div className="gallery-widget-shell">
           <div
             className="gallery-widget-frame home-horizontal-region gallery-horizontal-region"

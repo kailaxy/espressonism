@@ -185,7 +185,7 @@ export function PromoBanner({ content }: PromoBannerProps) {
 			>
 				<div className="promo-banner__slides">
 					{validSlides.map((slide, index) => {
-						const slideAltText = slide.altText ?? slide.title ?? "Promotional image from Espressonism";
+						const slideAltText = slide.altText ?? slide.title ?? "Promotional image from Grit Coffee";
 						const slideState = getSlideState(index);
 
 						return (

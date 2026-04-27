@@ -154,12 +154,18 @@ export default function KioskOrderPage({
         { key: "bites", label: "Pastries" }
       ];
 
-  // Prepend "All" and "Highlights" to the category list for UI
-  const displayCategories: CategoryConfig[] = [
-    { id: "all", label: "All" },
-    ...categoryList.map((cat) => ({ id: cat.key, label: cat.label })),
-    { id: "highlights", label: "Highlights" }
-  ];
+  const seenCategoryIds = new Set<string>(["all"]);
+  const displayCategories: CategoryConfig[] = [{ id: "all", label: "All" }];
+
+  categoryList.forEach((category) => {
+    const normalizedId = category.key.trim().toLowerCase();
+    if (!normalizedId || seenCategoryIds.has(normalizedId)) {
+      return;
+    }
+
+    seenCategoryIds.add(normalizedId);
+    displayCategories.push({ id: normalizedId, label: category.label });
+  });
   return (
     <section className={styles.kioskWrapper} aria-label="Kiosk ordering interface">
       <div className={styles.kioskMainRow}>

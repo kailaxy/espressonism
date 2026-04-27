@@ -1,10 +1,13 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { MouseEvent, ReactNode, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { smoothScrollToElement } from "../lib/smoothScroll";
 import { MobileMenuButton } from "./UI";
+import gritLogoHorizontal from "../../asset/logo/GRIT COFFEE LOGO Horizontal kyoto dusk.png";
+import gritLogoBull from "../../asset/logo/GRIT COFFEE LOGO_no_text_kyoto_dusk.png";
 
 interface NavbarProps {
   cartCount: number;
@@ -51,21 +54,23 @@ export function Navbar({ cartCount, onCartClick, hrefPrefix = "" }: NavbarProps)
       <a
         className="brand"
         href="/"
-        aria-label="Espressonism home"
+        aria-label="Grit Coffee home"
         onClick={handleBrandClick}
       >
-        <svg className="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path
-            d="M5 8.5h11.5a2.5 2.5 0 0 1 0 5H15a5 5 0 0 1-10 0v-5Z"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <path d="M4 16h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          <path d="M8 6V4.2M11 6V3.7M14 6V4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-        </svg>
-        ESPRESSONISM
+        <Image
+          className="brand-logo brand-logo--full"
+          src={gritLogoHorizontal}
+          alt="Grit Coffee logo"
+          priority
+          sizes="(max-width: 980px) 0px, 230px"
+        />
+        <Image
+          className="brand-logo brand-logo--icon"
+          src={gritLogoBull}
+          alt="Grit Coffee bull icon logo"
+          priority
+          sizes="(max-width: 980px) 44px, 0px"
+        />
       </a>
 
       <MobileMenuButton isOpen={isMenuOpen} onToggle={() => setIsMenuOpen((open) => !open)} />

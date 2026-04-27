@@ -156,9 +156,24 @@ function parseArchivedOrderItems(items: unknown): ArchivedOrderItem[] {
 
     const name = getStringFromKeys(item, ["name", "itemName", "title"]) ?? `Item ${index + 1}`;
     const quantity = getPositiveNumberFromKeys(item, ["quantity", "qty"]);
+    const selectedOptionsRaw = Array.isArray(item.selected_options)
+      ? item.selected_options
+      : Array.isArray(item.selectedOptions)
+        ? item.selectedOptions
+        : [];
+    const selectedOptions = selectedOptionsRaw
+      .map((entry) => {
+        if (typeof entry === "string") return entry.trim();
+        if (isRecord(entry)) {
+          return getStringFromKeys(entry, ["name"]);
+        }
+        return null;
+      })
+      .filter((value): value is string => Boolean(value));
     const modifierCandidates = [
       getStringFromKeys(item, ["size"]),
       getStringFromKeys(item, ["milk"]),
+      ...selectedOptions,
       getStringFromKeys(item, ["notes", "specialInstructions"])
     ].filter((value): value is string => Boolean(value));
 
@@ -304,7 +319,7 @@ export default function LoyaltyPage() {
 
       <main className="loyalty-page-main">
         <section className="loyalty-page-headline">
-          <p className="hero-kicker">Espressonism Account</p>
+          <p className="hero-kicker">Grit Coffee Account</p>
           <h1 className="hero-title loyalty-page-title">Coffee Passport</h1>
           <p className="hero-copy loyalty-page-copy">Track your delivery stamps, sync your profile details, and revisit every completed cup.</p>
         </section>
@@ -355,7 +370,7 @@ export default function LoyaltyPage() {
               <div className="loyalty-experience loyalty-page-experience">
                 <article className="loyalty-pass" aria-label="Your coffee passport progress">
                   <header className="loyalty-pass-header">
-                    <p className="loyalty-pass-kicker">Espressonism Loyalty</p>
+                    <p className="loyalty-pass-kicker">Grit Coffee Loyalty</p>
                     <h3>{dynamicHeader}</h3>
                     <p className="loyalty-pass-subtitle">
                       {hasFreeDrink

@@ -8,17 +8,36 @@ export interface MenuItem {
   id: string;
   name: string;
   price: number;
+  priceSolo: number;
+  priceDoppio: number;
   description: string;
   category: string;
   imageUrl?: string | null;
   note?: string;
+  customizationOptions: MenuItemCustomizationOption[];
 }
 
-export type SizeOption = "regular" | "large";
-export type MilkOption = "whole" | "oat" | "almond";
+export type SizeOption = "solo" | "doppio";
 export type OrderType = "pickup" | "delivery";
 export type PaymentMethod = "cash" | "gcash";
 export type TrackerStatus = "received" | "brewing" | "ready" | "completed" | "cancelled";
+
+export interface MenuItemCustomizationOption {
+  id: string;
+  name: string;
+  optionType: string;
+  extraCost: number;
+  required: boolean;
+  maxSelect: number;
+  sortOrder: number;
+}
+
+export interface SelectedCustomizationOption {
+  id: string;
+  name: string;
+  optionType: string;
+  extraCost: number;
+}
 
 const MODAL_FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -211,7 +230,7 @@ export interface CartLine {
   unitPrice: number;
   quantity: number;
   size: SizeOption;
-  milk: MilkOption;
+  selectedOptions: SelectedCustomizationOption[];
   imageUrl?: string | null;
 }
 
@@ -219,10 +238,10 @@ interface ModifierModalProps {
   isOpen: boolean;
   item: MenuItem | null;
   size: SizeOption;
-  milk: MilkOption;
+  selectedOptionIds: string[];
   finalPrice: number;
   onSizeChange: (value: SizeOption) => void;
-  onMilkChange: (value: MilkOption) => void;
+  onToggleOption: (optionId: string) => void;
   onClose: () => void;
   onAddToCart: () => void;
 }
@@ -231,10 +250,10 @@ export function ModifierModal({
   isOpen,
   item,
   size,
-  milk,
+  selectedOptionIds,
   finalPrice,
   onSizeChange,
-  onMilkChange,
+  onToggleOption,
   onClose,
   onAddToCart
 }: ModifierModalProps) {
@@ -283,33 +302,61 @@ export function ModifierModal({
             <input
               type="radio"
               name="size"
-              value="regular"
-              checked={size === "regular"}
-              onChange={() => onSizeChange("regular")}
+              value="solo"
+              checked={size === "solo"}
+              onChange={() => onSizeChange("solo")}
             />
-            Regular
+            Solo (PHP {item.priceSolo.toFixed(2)})
           </label>
           <label>
-            <input type="radio" name="size" value="large" checked={size === "large"} onChange={() => onSizeChange("large")} />
-            Large (+PHP 20)
+            <input type="radio" name="size" value="doppio" checked={size === "doppio"} onChange={() => onSizeChange("doppio")} />
+            Doppio (PHP {item.priceDoppio.toFixed(2)})
           </label>
         </fieldset>
 
-        <fieldset className="modifier-fieldset">
-          <legend>Milk</legend>
-          <label>
-            <input type="radio" name="milk" value="whole" checked={milk === "whole"} onChange={() => onMilkChange("whole")} />
-            Whole
-          </label>
-          <label>
-            <input type="radio" name="milk" value="oat" checked={milk === "oat"} onChange={() => onMilkChange("oat")} />
-            Oat (+PHP 50)
-          </label>
-          <label>
-            <input type="radio" name="milk" value="almond" checked={milk === "almond"} onChange={() => onMilkChange("almond")} />
-            Almond (+PHP 50)
-          </label>
-        </fieldset>
+        {Object.entries(
+          item.customizationOptions.reduce<Record<string, MenuItemCustomizationOption[]>>((acc, option) => {
+            const key = option.optionType || "other";
+            if (!acc[key]) {
+              acc[key] = [];
+            }
+            acc[key].push(option);
+            return acc;
+          }, {})
+        ).map(([optionType, options]) => {
+          const sortedOptions = [...options].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+          const maxSelect = Math.max(...sortedOptions.map((option) => option.maxSelect), 1);
+          const inputType = maxSelect === 1 ? "radio" : "checkbox";
+          const legend = optionType
+            .split("_")
+            .filter(Boolean)
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(" ");
+
+          return (
+            <fieldset key={optionType} className="modifier-fieldset">
+              <legend>{legend}</legend>
+              {sortedOptions.map((option) => {
+                const checked = selectedOptionIds.includes(option.id);
+                const extraLabel = option.extraCost > 0 ? ` (+PHP ${option.extraCost.toFixed(2)})` : "";
+
+                return (
+                  <label key={option.id}>
+                    <input
+                      type={inputType}
+                      name={`option-${optionType}`}
+                      value={option.id}
+                      checked={checked}
+                      onChange={() => onToggleOption(option.id)}
+                    />
+                    {option.name}
+                    {extraLabel}
+                  </label>
+                );
+              })}
+            </fieldset>
+          );
+        })}
 
         <div className="order-modal-total">
           <span>Final Price</span>
@@ -329,17 +376,19 @@ export function ModifierModal({
   );
 }
 
-function formatModifierText(size: SizeOption, milk: MilkOption): string {
-  const sizeText = size === "large" ? "Large" : "Regular";
-  const milkText = milk === "whole" ? "Whole milk" : milk === "oat" ? "Oat milk" : "Almond milk";
-  return `${sizeText}, ${milkText}`;
+function formatModifierText(size: SizeOption, selectedOptions: SelectedCustomizationOption[]): string {
+  const sizeText = size === "doppio" ? "Doppio" : "Solo";
+  if (selectedOptions.length === 0) {
+    return sizeText;
+  }
+
+  return `${sizeText}, ${selectedOptions.map((option) => option.name).join(", ")}`;
 }
 
 interface CartModalProps {
   isOpen: boolean;
   lines: CartLine[];
   subtotal: number;
-  serviceFee: number;
   grandTotal: number;
   isCheckingOut: boolean;
   pickupTime: string;
@@ -355,7 +404,6 @@ export function CartModal({
   isOpen,
   lines,
   subtotal,
-  serviceFee,
   grandTotal,
   isCheckingOut,
   pickupTime,
@@ -411,7 +459,7 @@ export function CartModal({
                   <div>
                     <strong>{line.name}</strong>
                     <span>{line.quantity} x PHP {line.unitPrice.toFixed(2)}</span>
-                    <span className="order-line-modifiers">{formatModifierText(line.size, line.milk)}</span>
+                    <span className="order-line-modifiers">{formatModifierText(line.size, line.selectedOptions)}</span>
                   </div>
                 </div>
                 <div className="order-line-actions">
@@ -458,10 +506,6 @@ export function CartModal({
           <p>
             <span>Subtotal</span>
             <strong>PHP {subtotal.toFixed(2)}</strong>
-          </p>
-          <p>
-            <span>Service</span>
-            <strong>PHP {serviceFee.toFixed(2)}</strong>
           </p>
           <p className="order-grand-total">
             <span>Total</span>
@@ -654,7 +698,7 @@ export function ReceiptView({
 
       const downloadLink = document.createElement("a");
       const safeOrderId = receiptOrderLabel.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
-      downloadLink.download = `espressonism-receipt-${safeOrderId || "order"}.png`;
+      downloadLink.download = `grit-coffee-receipt-${safeOrderId || "order"}.png`;
       downloadLink.href = imageData;
       downloadLink.click();
     } catch (error) {
@@ -666,7 +710,7 @@ export function ReceiptView({
     <section className="order-receipt-shell receipt-print-root" aria-live="polite">
       <article ref={receiptPaperRef} className="order-receipt-paper">
         <header className="receipt-header">
-          <p>ESPRESSONISM</p>
+          <p>GRIT COFFEE</p>
           <p>Digital Receipt</p>
         </header>
 
@@ -680,14 +724,16 @@ export function ReceiptView({
         <ul className="receipt-line-list">
           {lines.map((line) => {
             const lineTotal = line.quantity * line.unitPrice;
-            const sizeLabel = line.size === "large" ? "Large" : "Regular";
-            const milkLabel = line.milk === "whole" ? "Whole" : line.milk === "oat" ? "Oat" : "Almond";
+            const sizeLabel = line.size === "doppio" ? "Doppio" : "Solo";
+            const selectedOptionsLabel = line.selectedOptions.length > 0
+              ? line.selectedOptions.map((option) => option.name).join(", ")
+              : "No add-ons";
 
             return (
               <li key={line.id} className="receipt-line-item">
                 <div className="receipt-line-main">
                   <p>{line.quantity} x {line.name}</p>
-                  <p className="receipt-line-meta">{sizeLabel} / {milkLabel}</p>
+                  <p className="receipt-line-meta">{sizeLabel} / {selectedOptionsLabel}</p>
                 </div>
                 <strong>PHP {lineTotal.toFixed(2)}</strong>
               </li>

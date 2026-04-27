@@ -14,9 +14,9 @@ interface LoyaltyCardProps {
 export function LoyaltyCard({ program }: LoyaltyCardProps) {
   return (
     <div className="loyalty-experience">
-      <article className="loyalty-pass" aria-label="Espressonism loyalty passport card">
+      <article className="loyalty-pass" aria-label="Grit Coffee loyalty passport card">
         <header className="loyalty-pass-header">
-          <p className="loyalty-pass-kicker">Espressonism Coffee Passport</p>
+          <p className="loyalty-pass-kicker">Grit Coffee Passport</p>
           <h3>{program.title}</h3>
           <p className="loyalty-pass-subtitle">{program.description}</p>
         </header>

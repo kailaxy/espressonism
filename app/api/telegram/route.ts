@@ -121,6 +121,18 @@ function formatItemLine(item: unknown, index: number): string | null {
   const name = getStringFromKeys(item, ["name", "itemName", "title"]);
   const quantity = getPositiveNumberFromKeys(item, ["quantity", "qty"]);
   const size = getStringFromKeys(item, ["size"]);
+  const selectedOptionsRaw = Array.isArray(item.selected_options)
+    ? item.selected_options
+    : Array.isArray(item.selectedOptions)
+      ? item.selectedOptions
+      : [];
+  const selectedOptions = selectedOptionsRaw
+    .map((entry) => {
+      if (isNonEmptyString(entry)) return entry.trim();
+      if (isRecord(entry) && isNonEmptyString(entry.name)) return entry.name.trim();
+      return "";
+    })
+    .filter((value) => value.length > 0);
   const notes = getStringFromKeys(item, ["notes", "specialInstructions"]);
 
   let line = "- ";
@@ -133,6 +145,10 @@ function formatItemLine(item: unknown, index: number): string | null {
 
   if (size) {
     line += ` (${size})`;
+  }
+
+  if (selectedOptions.length > 0) {
+    line += ` [${selectedOptions.join(", ")}]`;
   }
 
   if (notes) {
