@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { AuthModal, Navbar, Skeleton, SkeletonGroup, SkeletonListRow } from "../components";
 // @ts-ignore - Supabase client is intentionally authored in a JavaScript module.
 import { supabase } from "../../supabaseClient";
+import loyaltyLogo from "../../asset/logo/GRIT COFFEE LOGO_no_text_White.png";
 
 type LoyaltyProfileRow = {
   user_id: string;
@@ -293,25 +295,12 @@ export default function LoyaltyPage() {
     };
   }, [userId]);
 
-  const currentStamps = profile?.current_stamps ?? 0;
-  const displayStamps = currentStamps % 5;
-  const hasFreeDrink = displayStamps === 0 && currentStamps > 0;
-
-  const dynamicHeader = useMemo(() => {
-    if (hasFreeDrink) {
-      return "Free drink unlocked.";
-    }
-
-    if (displayStamps === 4) {
-      return "One more stamp to go.";
-    }
-
-    if (displayStamps === 0) {
-      return "Start your next coffee cycle.";
-    }
-
-    return `${5 - displayStamps} stamps until your free drink.`;
-  }, [displayStamps, hasFreeDrink]);
+  const currentStampTotal = profile?.current_stamps ?? 0;
+  const stampsEarned = currentStampTotal === 0 ? 0 : currentStampTotal % 5 || 5;
+  const totalStamps = profile?.total_stamps_earned ?? 0;
+  const profileName = profile?.full_name?.trim() || user?.email || "Loyalty member";
+  const profilePhone = profile?.phone_number?.trim() || "Not yet synced";
+  const initials = profileName.trim().charAt(0).toUpperCase() || "L";
 
   return (
     <div className="shell loyalty-page-shell">
@@ -326,28 +315,29 @@ export default function LoyaltyPage() {
 
         {!authReady ? (
           <section className="loyalty-page-panel" aria-live="polite" aria-busy="true">
-            <div className="loyalty-experience loyalty-page-experience" aria-hidden="true">
-              <article className="loyalty-pass">
+            <div className="loyalty-experience loyalty-page-experience loyalty-cards-wrap" aria-hidden="true">
+              <article className="loyalty-pass-card loyalty-pass-card--reference">
                 <SkeletonGroup>
-                  <Skeleton type="text" width="36%" height="0.95rem" />
-                  <Skeleton type="text" width="58%" height="1.45rem" />
-                  <Skeleton type="text" width="92%" />
-                  <div className="loyalty-stamp-grid loyalty-stamp-grid-five">
+                  <Skeleton type="text" width="34%" height="0.7rem" />
+                  <Skeleton type="text" width="62%" height="2.1rem" />
+                  <Skeleton type="text" width="56%" />
+                  <div className="pass-stamps">
                     {Array.from({ length: 5 }).map((_, index) => (
-                      <Skeleton key={`loyalty-session-stamp-loading-${index}`} type="block" height="3.75rem" />
+                      <Skeleton key={`loyalty-session-stamp-loading-${index}`} type="block" height="2.5rem" />
                     ))}
                   </div>
-                  <Skeleton type="text" width="54%" />
+                  <Skeleton type="block" width="100%" height="0.35rem" />
+                  <Skeleton type="text" width="72%" height="0.7rem" />
                 </SkeletonGroup>
               </article>
 
-              <aside className="loyalty-details loyalty-profile-sync">
+              <aside className="loyalty-profile-card loyalty-profile-card--reference">
                 <SkeletonGroup>
-                  <Skeleton type="text" width="46%" height="1.1rem" />
+                  <Skeleton type="text" width="42%" height="1.1rem" />
                   <SkeletonListRow />
+                  <Skeleton type="block" width="100%" height="4.2rem" />
+                  <Skeleton type="block" width="100%" height="0.95rem" />
                   <SkeletonListRow />
-                  <SkeletonListRow />
-                  <Skeleton type="block" width="100%" height="2.25rem" />
                 </SkeletonGroup>
               </aside>
             </div>
@@ -357,7 +347,7 @@ export default function LoyaltyPage() {
         {authReady && !user ? (
           <section className="loyalty-login-prompt" aria-live="polite">
             <h2>Sign in to view your passport</h2>
-            <p>Your loyalty progress is tied to your account email and synced from completed delivery orders.</p>
+            <p>Your loyalty progress is tied to your account email and synced from completed orders.</p>
             <button type="button" className="cta" onClick={() => setIsAuthModalOpen(true)}>
               Log In / Sign Up
             </button>
@@ -367,56 +357,89 @@ export default function LoyaltyPage() {
         {authReady && user ? (
           <>
             <section className="loyalty-page-panel">
-              <div className="loyalty-experience loyalty-page-experience">
-                <article className="loyalty-pass" aria-label="Your coffee passport progress">
-                  <header className="loyalty-pass-header">
-                    <p className="loyalty-pass-kicker">Grit Coffee Loyalty</p>
-                    <h3>{dynamicHeader}</h3>
-                    <p className="loyalty-pass-subtitle">
-                      {hasFreeDrink
-                        ? "Your next regular espresso-based drink is free. Claim it on your next order."
-                        : "Every completed delivery order adds one stamp to this cycle."}
-                    </p>
-                  </header>
+              <div className="loyalty-cards-wrap">
+                <article className="loyalty-pass-card loyalty-pass-card--reference" aria-label="Your coffee passport progress">
+                  <div className="pass-logo-wrap" aria-hidden="true">
+                    <Image
+                      src={loyaltyLogo}
+                      alt=""
+                      className="pass-logo"
+                      priority={false}
+                    />
+                  </div>
 
-                  <div className="loyalty-stamp-grid loyalty-stamp-grid-five" role="list" aria-label="Current cycle stamp progress">
+                  <div>
+                    <p className="pass-kicker">Grit Coffee Loyalty</p>
+                    <p className="pass-title">{stampsEarned} of 5<br />stamps</p>
+                  </div>
+
+                  <p className="pass-sub">Every completed order adds one stamp to this cycle.</p>
+
+                  <div className="pass-stamps" role="list" aria-label="Current cycle stamp progress">
                     {Array.from({ length: 5 }).map((_, index) => {
-                      const isFilled = index < displayStamps;
+                      const isEarned = index < stampsEarned;
+
                       return (
                         <div
                           key={`passport-stamp-${index + 1}`}
-                          className={`loyalty-stamp ${isFilled ? "loyalty-stamp-filled" : ""}`}
+                          className={`pass-stamp ${isEarned ? "is-earned" : ""}`}
                           role="listitem"
-                          aria-label={`Stamp ${index + 1}${isFilled ? " collected" : " empty"}`}
+                          aria-label={`Stamp ${index + 1}${isEarned ? " earned" : " empty"}`}
                         >
-                          <span>{index + 1}</span>
+                          {isEarned ? "✓" : index + 1}
                         </div>
                       );
                     })}
                   </div>
 
-                  <p className="loyalty-pass-rule">
-                    {hasFreeDrink ? "Free drink available now" : `${5 - displayStamps} more ${5 - displayStamps === 1 ? "stamp" : "stamps"} to unlock your reward`}
-                  </p>
+                  <div className="pass-progress-wrap" aria-hidden="true">
+                    <div className="pass-progress-fill" style={{ width: `${(stampsEarned / 5) * 100}%` }} />
+                  </div>
+
+                  <div className="pass-footer">
+                    <p className="pass-rule">{5 - stampsEarned} more stamps to unlock reward</p>
+                    <span className="pass-badge">Active</span>
+                  </div>
                 </article>
 
-                <aside className="loyalty-details loyalty-profile-sync">
-                  <h4>Latest Profile Sync</h4>
-                  <ul>
-                    <li>
-                      <span className="loyalty-dot" aria-hidden="true" />
-                      Full name: {profile?.full_name?.trim() ? profile.full_name : "Not yet synced"}
-                    </li>
-                    <li>
-                      <span className="loyalty-dot" aria-hidden="true" />
-                      Phone number: {profile?.phone_number?.trim() ? profile.phone_number : "Not yet synced"}
-                    </li>
-                    <li>
-                      <span className="loyalty-dot" aria-hidden="true" />
-                      Total stamps earned: {profile?.total_stamps_earned ?? 0}
-                    </li>
-                  </ul>
-                  <p className="loyalty-details-reward">Only completed orders with your account earn stamps.</p>
+                <aside className="loyalty-profile-card loyalty-profile-card--reference" aria-label="Profile sync summary">
+                  <div className="profile-head">
+                    <div className="profile-avatar">{initials}</div>
+                    <div>
+                      <p className="profile-name">{profileName}</p>
+                      <p className="profile-sub">{profilePhone} · Loyalty member</p>
+                    </div>
+                  </div>
+
+                  <div className="profile-stat-row">
+                    <div className="profile-stat-box">
+                      <p className="profile-stat-label">Total stamps</p>
+                      <p className="profile-stat-val">{totalStamps} <span>earned</span></p>
+                    </div>
+                    <div className="profile-stat-box">
+                      <p className="profile-stat-label">Current cycle</p>
+                      <p className="profile-stat-val">{stampsEarned} <span>/ 5</span></p>
+                    </div>
+                  </div>
+
+                  <hr className="profile-divider" />
+
+                  <div className="profile-info-row">
+                    <div className="profile-info-line">
+                      <span className="profile-info-key">Full name</span>
+                      <span className="profile-info-val">{profileName}</span>
+                    </div>
+                    <div className="profile-info-line">
+                      <span className="profile-info-key">Phone</span>
+                      <span className="profile-info-val">{profilePhone}</span>
+                    </div>
+                    <div className="profile-info-line">
+                      <span className="profile-info-key">Last synced</span>
+                      <span className="profile-info-val">Just now</span>
+                    </div>
+                  </div>
+
+                  <p className="profile-notice">Only completed orders with your account earn stamps.</p>
                 </aside>
               </div>
             </section>

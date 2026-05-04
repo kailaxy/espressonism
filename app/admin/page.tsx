@@ -1,7 +1,7 @@
 "use client";
 
 import NextImage from "next/image";
-import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Skeleton,
   SkeletonFormBlock,
@@ -21,6 +21,7 @@ type MenuCategoryRow = {
   label: string;
   sort_order: number | string;
   active: boolean | null;
+  icon_svg: string | null;
 };
 
 type DashboardOrder = {
@@ -132,6 +133,7 @@ type MenuManagerSubview = "drinks" | "customizations";
 type MenuCategoryForm = {
   label: string;
   active: boolean;
+  iconSvg: string;
 };
 
 type TodayHighlightRow = {
@@ -258,7 +260,8 @@ const EMPTY_CUSTOMIZATION_LINK_FORM: CustomizationLinkForm = {
 
 const EMPTY_MENU_CATEGORY_FORM: MenuCategoryForm = {
   label: "",
-  active: true
+  active: true,
+  iconSvg: ""
 };
 
 const EMPTY_TODAY_AT_BAR_FORM: TodayAtBarForm = {
@@ -317,6 +320,16 @@ function normalizeMenuCategory(value: unknown): string {
   if (typeof value !== "string") return DEFAULT_MENU_CATEGORY_KEY;
   const normalized = value.trim();
   return normalized || DEFAULT_MENU_CATEGORY_KEY;
+}
+
+function normalizeMenuCategoryIcon(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function svgMarkupToDataUri(svgMarkup: string): string {
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svgMarkup)}`;
 }
 
 function sortMenuCategories(categories: MenuCategoryRow[]): MenuCategoryRow[] {
@@ -1752,11 +1765,28 @@ export default function AdminDashboardPage() {
     setIsMenuCategoriesLoading(true);
     setMenuCategoriesError(null);
 
-    const { data, error } = await supabase
+    const iconAwareQuery = await supabase
       .from("menu_categories")
-      .select("key, label, sort_order, active")
+      .select("key, label, sort_order, active, icon_svg")
       .order("sort_order", { ascending: true })
       .order("label", { ascending: true });
+
+    let data = iconAwareQuery.data as MenuCategoryRow[] | null;
+    let error = iconAwareQuery.error;
+
+    if (error && error.message?.toLowerCase().includes("icon_svg")) {
+      const fallbackQuery = await supabase
+        .from("menu_categories")
+        .select("key, label, sort_order, active")
+        .order("sort_order", { ascending: true })
+        .order("label", { ascending: true });
+
+      data = ((fallbackQuery.data ?? []) as MenuCategoryRow[]).map((category) => ({
+        ...category,
+        icon_svg: null
+      }));
+      error = fallbackQuery.error;
+    }
 
     if (error) {
       setMenuCategoriesError(error.message || "Unable to load menu categories.");
@@ -1769,7 +1799,8 @@ export default function AdminDashboardPage() {
       key: category.key,
       label: category.label,
       sort_order: Number(category.sort_order) || 0,
-      active: category.active ?? true
+      active: category.active ?? true,
+      icon_svg: normalizeMenuCategoryIcon(category.icon_svg)
     }))));
     setIsMenuCategoriesLoading(false);
   };
@@ -1808,7 +1839,8 @@ export default function AdminDashboardPage() {
     setEditingCategory(category);
     setCategoryForm({
       label: category.label,
-      active: Boolean(category.active)
+      active: Boolean(category.active),
+      iconSvg: category.icon_svg?.trim() ?? ""
     });
     setIsCategoryModalOpen(true);
     setMenuCategoriesError(null);
@@ -1826,6 +1858,34 @@ export default function AdminDashboardPage() {
     setMenuCategoriesError(null);
   };
 
+  const handleCategoryIconUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const isSvg = file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
+    if (!isSvg) {
+      setMenuCategoriesError("Only SVG files are supported for category icons.");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result.trim() : "";
+      if (!text) {
+        setMenuCategoriesError("Unable to read SVG file.");
+      } else {
+        setCategoryForm((previousForm) => ({ ...previousForm, iconSvg: text }));
+      }
+      event.target.value = "";
+    };
+    reader.onerror = () => {
+      setMenuCategoriesError("Unable to read SVG file.");
+      event.target.value = "";
+    };
+    reader.readAsText(file);
+  };
+
   const handleSaveCategory = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -1840,11 +1900,13 @@ export default function AdminDashboardPage() {
     setMenuCategoriesError(null);
 
     const nextSortOrder = editingCategory ? Number(editingCategory.sort_order) || 0 : getNextCategorySortOrder();
+    const nextIconSvg = categoryForm.iconSvg.trim();
 
     const payload = {
       label: nextLabel,
       sort_order: nextSortOrder,
-      active: categoryForm.active
+      active: categoryForm.active,
+      icon_svg: nextIconSvg || null
     };
 
     if (editingCategory) {
@@ -2231,12 +2293,15 @@ export default function AdminDashboardPage() {
     setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
   };
 
-  const openCustomizationLinkModal = (menuItemId?: string) => {
+  const openCustomizationLinkModal = (menuItemId?: string, optionId?: string) => {
     if (menuItemId) {
       setActiveCustomizationMenuItemId(menuItemId);
     }
     setCustomizationError(null);
-    setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
+    setCustomizationLinkForm({
+      ...EMPTY_CUSTOMIZATION_LINK_FORM,
+      optionId: optionId ?? ""
+    });
     setIsCustomizationLinkModalOpen(true);
   };
 
@@ -2332,6 +2397,7 @@ export default function AdminDashboardPage() {
         setMenuItemCustomizationLinks((previousLinks) => previousLinks.filter((link) => link.option_id !== option.id));
         if (editingCustomizationOption?.id === option.id) {
           resetCustomizationOptionForm();
+          setIsCustomizationOptionModalOpen(false);
         }
         setIsSavingCustomizationOption(false);
         setAdminNotice({ tone: "success", message: "Customization option deleted." });
@@ -2344,16 +2410,9 @@ export default function AdminDashboardPage() {
     if (isLinkingCustomizationOption || !activeCustomizationMenuItemId) return;
 
     const optionId = customizationLinkForm.optionId.trim();
-    const maxSelect = Math.max(1, Number(customizationLinkForm.maxSelect) || 1);
-    const sortOrder = Number(customizationLinkForm.sortOrder);
 
     if (!optionId) {
       setCustomizationError("Select a customization option to link.");
-      return;
-    }
-
-    if (!Number.isFinite(sortOrder)) {
-      setCustomizationError("Sort order must be a valid number.");
       return;
     }
 
@@ -2366,9 +2425,9 @@ export default function AdminDashboardPage() {
         {
           menu_item_id: activeCustomizationMenuItemId,
           option_id: optionId,
-          sort_order: sortOrder,
+          sort_order: 10,
           required: customizationLinkForm.required,
-          max_select: maxSelect
+          max_select: 1
         }
       ])
       .select("id, menu_item_id, option_id, sort_order, required, max_select")
@@ -2440,6 +2499,47 @@ export default function AdminDashboardPage() {
         setAdminNotice({ tone: "success", message: "Customization unlinked from menu item." });
       }
     });
+  };
+
+  const handleToggleCustomizationLink = async (optionId: string) => {
+    if (!activeCustomizationMenuItemId || isLinkingCustomizationOption) return;
+
+    const existingLink = (customizationLinksByMenuItem[activeCustomizationMenuItemId] ?? []).find(
+      (link) => link.option_id === optionId
+    );
+
+    if (existingLink) {
+      // Option is currently linked; unlink it
+      handleUnlinkCustomizationOption(existingLink);
+    } else {
+      // Option is not linked; link it with default values
+      setIsLinkingCustomizationOption(true);
+      setCustomizationError(null);
+
+      const { data, error } = await supabase
+        .from("menu_item_customizations")
+        .insert([
+          {
+            menu_item_id: activeCustomizationMenuItemId,
+            option_id: optionId,
+            sort_order: 10,
+            required: false,
+            max_select: 1
+          }
+        ])
+        .select("id, menu_item_id, option_id, sort_order, required, max_select")
+        .single();
+
+      if (error || !data?.id) {
+        setCustomizationError(error?.message || "Unable to link customization option.");
+        setIsLinkingCustomizationOption(false);
+        return;
+      }
+
+      setMenuItemCustomizationLinks((previousLinks) => [...previousLinks, data as MenuItemCustomizationLinkRow]);
+      setIsLinkingCustomizationOption(false);
+      setAdminNotice({ tone: "success", message: "Customization linked to menu item." });
+    }
   };
 
   const handleAddTodayHighlight = async (event: FormEvent<HTMLFormElement>) => {
@@ -3333,15 +3433,15 @@ export default function AdminDashboardPage() {
       ) : null}
 
       {activeTab === "menu" ? (
-        <section className="barista-manager-panel" aria-label="Menu manager">
+        <section className="barista-manager-panel barista-menu-manager-shell" aria-label="Menu manager">
           <header className="barista-manager-head">
             <div>
               <p className="barista-dashboard-kicker">Owner CMS</p>
               <h2>Menu Manager</h2>
               <p>
                 {menuManagerSubview === "drinks"
-                  ? "Manage categories and drinks in one section."
-                  : "Manage drink customization options and linked modifiers."}
+                  ? "Manage Categories And Drinks In One Section."
+                  : "Manage Drink Customization Options And Linked Modifiers."}
               </p>
             </div>
 
@@ -3367,15 +3467,23 @@ export default function AdminDashboardPage() {
               </nav>
 
               {menuManagerSubview === "drinks" ? (
-                <>
-                  <button type="button" className="barista-manager-toggle" onClick={openManageCategoriesModal}>
+                <div className="barista-menu-subview-actions">
+                  <button
+                    type="button"
+                    className="barista-manager-toggle barista-manager-toggle-secondary"
+                    onClick={openManageCategoriesModal}
+                  >
                     Manage Categories
                   </button>
 
-                  <button type="button" className="barista-manager-toggle" onClick={openCreateMenuForm}>
+                  <button
+                    type="button"
+                    className="barista-manager-toggle barista-manager-toggle-secondary"
+                    onClick={openCreateMenuForm}
+                  >
                     Add New Drink
                   </button>
-                </>
+                </div>
               ) : null}
             </div>
           </header>
@@ -3413,7 +3521,17 @@ export default function AdminDashboardPage() {
                       aria-controls={`manager-category-${category.key}`}
                       onClick={() => toggleManagerCategory(category.key)}
                     >
-                      <span className="barista-category-accordion-title">{category.label}</span>
+                      <span className="barista-category-accordion-title">
+                        {category.icon_svg ? (
+                          <img
+                            src={svgMarkupToDataUri(category.icon_svg)}
+                            alt=""
+                            aria-hidden="true"
+                            className="barista-category-inline-icon"
+                          />
+                        ) : null}
+                        <span>{formatMenuCategoryLabel(category.label)}</span>
+                      </span>
                       <span className="barista-category-accordion-meta">{categoryItems.length} item{categoryItems.length === 1 ? "" : "s"}</span>
                       <span className="barista-category-accordion-icon" aria-hidden="true">
                         {isExpanded ? "−" : "+"}
@@ -3498,215 +3616,149 @@ export default function AdminDashboardPage() {
               <header className="barista-manager-head inventory-panel-head-row">
                 <div>
                   <h3 className="inventory-panel-title">Drink Customizations</h3>
-                  <p>Manage your option catalog, then link options to each drink as needed.</p>
-                </div>
-
-                <div className="barista-manager-head-actions">
-                  <button type="button" className="barista-manager-toggle" onClick={openCreateCustomizationOptionModal}>
-                    Add Option
-                  </button>
-                  <button
-                    type="button"
-                    className="barista-manager-toggle"
-                    onClick={() => openCustomizationLinkModal()}
-                    disabled={!activeCustomizationMenuItemId || linkableCustomizationOptions.length === 0}
-                  >
-                    Link Option
-                  </button>
+                  <p>Manage your option catalog and link options to each drink.</p>
                 </div>
               </header>
 
               {customizationError ? <p className="barista-state barista-state-error">{customizationError}</p> : null}
 
               {isCustomizationLoading ? (
-                <div className="barista-menu-table-wrap" aria-label="Loading customizations" aria-busy="true">
-                  <SkeletonPageSection titleWidth="34%" lineCount={1} lineWidths={["56%"]} />
-                  {Array.from({ length: 4 }).map((_, index) => (
-                    <SkeletonTableRow
-                      key={`customization-skeleton-${index}`}
-                      columns={4}
-                      columnWidths={["30%", "22%", "18%", "18%"]}
-                    />
-                  ))}
+                <div className="barista-customization-split-pane-container" aria-label="Loading customizations" aria-busy="true">
+                  <div className="barista-customization-split-pane-left">
+                    <SkeletonPageSection titleWidth="34%" lineCount={1} lineWidths={["56%"]} />
+                    {Array.from({ length: 3 }).map((_, index) => (
+                      <SkeletonListRow key={`customization-skeleton-${index}`} />
+                    ))}
+                  </div>
+                  <div className="barista-customization-split-pane-right">
+                    <SkeletonFormBlock fields={2} />
+                  </div>
                 </div>
               ) : (
-                <>
-                  <form className="barista-manager-form" onSubmit={(event) => event.preventDefault()}>
-                    <div className="barista-manager-form-grid">
-                      <label className="barista-form-field" htmlFor="customizationMenuItemSelect">
-                        Active Menu Item
-                        <select
-                          id="customizationMenuItemSelect"
-                          value={activeCustomizationMenuItemId}
-                          onChange={(event) => {
-                            setActiveCustomizationMenuItemId(event.target.value);
-                            setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
-                          }}
-                          disabled={menuItems.length === 0}
-                        >
-                          {menuItems.length > 0 ? (
-                            menuItems.map((menuItem) => (
-                              <option key={menuItem.id} value={menuItem.id}>
-                                {menuItem.name}
-                              </option>
-                            ))
-                          ) : (
-                            <option value="">No menu items available</option>
-                          )}
-                        </select>
-                      </label>
+                <div className="barista-customization-split-pane-container">
+                  <div className="barista-customization-split-pane-left">
+                    <button
+                      type="button"
+                      className="barista-customization-create-btn barista-manager-toggle barista-manager-toggle-primary"
+                      onClick={openCreateCustomizationOptionModal}
+                    >
+                      + Create New Option
+                    </button>
 
-                      <div className="barista-form-field">
-                        <span>Link Status</span>
-                        <p className="barista-image-helper">
-                          {linkableCustomizationOptions.length > 0
-                            ? `${linkableCustomizationOptions.length} option${linkableCustomizationOptions.length === 1 ? "" : "s"} available to link.`
-                            : "No available options left to link for this menu item."}
-                        </p>
-                      </div>
+                    <div className="barista-customization-catalog">
+                      {customizationOptions.length === 0 ? (
+                        <p className="barista-customization-empty">No customization options yet. Create one to get started.</p>
+                      ) : (
+                        customizationOptions.map((option) => (
+                          <article
+                            key={option.id}
+                            className="barista-customization-option-card"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openEditCustomizationOptionModal(option)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openEditCustomizationOptionModal(option);
+                              }
+                            }}
+                          >
+                            <div className="barista-customization-option-card-content">
+                              <h4 className="barista-customization-option-name">{option.name}</h4>
+                              <p className="barista-customization-option-type">
+                                {formatMenuCategoryLabel(option.option_type)}
+                              </p>
+                              <p className="barista-customization-option-cost">
+                                {formatCurrency(parseMoney(option.extra_cost))}
+                              </p>
+                            </div>
+                          </article>
+                        ))
+                      )}
                     </div>
-                  </form>
-
-                  <div className="barista-customization-grid" aria-label="Customization tables">
-                    <article className="barista-customization-table-panel">
-                      <header className="barista-customization-table-head">
-                        <h4>Option Catalog</h4>
-                        <p>All customization options available for linking.</p>
-                      </header>
-
-                      <div className="barista-menu-table-wrap barista-customization-table-wrap">
-                        <table className="barista-menu-table" aria-label="Customization options">
-                          <thead>
-                            <tr>
-                              <th>Name</th>
-                              <th>Type</th>
-                              <th>Extra Cost</th>
-                              <th className="barista-table-action-cell">Action</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {customizationOptions.length === 0 ? (
-                              <tr>
-                                <td colSpan={4}>No customization options yet.</td>
-                              </tr>
-                            ) : (
-                              customizationOptions.map((option) => (
-                                <tr key={option.id}>
-                                  <td>{option.name}</td>
-                                  <td>{formatMenuCategoryLabel(option.option_type)}</td>
-                                  <td>{formatCurrency(parseMoney(option.extra_cost))}</td>
-                                  <td className="barista-menu-actions">
-                                    <button
-                                      type="button"
-                                      className="barista-menu-edit-btn"
-                                      onClick={() => openEditCustomizationOptionModal(option)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="barista-menu-image-btn"
-                                      onClick={() => openCustomizationLinkModal(activeCustomizationMenuItemId || undefined)}
-                                      disabled={!activeCustomizationMenuItemId || !linkableCustomizationOptions.some((entry) => entry.id === option.id)}
-                                    >
-                                      Link
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="barista-danger-btn"
-                                      onClick={() => handleDeleteCustomizationOption(option)}
-                                    >
-                                      Delete
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </article>
-
-                    <article className="barista-customization-table-panel">
-                      <header className="barista-customization-table-head">
-                        <h4>Linked to Active Drink</h4>
-                        <p>Configure required, max select, sort order, and unlink.</p>
-                      </header>
-
-                      <div className="barista-menu-table-wrap barista-customization-table-wrap">
-                        <table className="barista-menu-table" aria-label="Menu item customization links">
-                          <thead>
-                            <tr>
-                              <th>Option</th>
-                              <th>Required</th>
-                              <th>Max Select</th>
-                              <th>Sort</th>
-                              <th className="barista-table-action-cell">Action</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(customizationLinksByMenuItem[activeCustomizationMenuItemId] ?? []).length === 0 ? (
-                              <tr>
-                                <td colSpan={5}>No linked options for this menu item.</td>
-                              </tr>
-                            ) : (
-                              [...(customizationLinksByMenuItem[activeCustomizationMenuItemId] ?? [])]
-                                .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
-                                .map((link) => {
-                                  const option = customizationOptionsById.get(link.option_id);
-
-                                  return (
-                                    <tr key={link.id}>
-                                      <td>{option?.name ?? "Unknown option"}</td>
-                                      <td>
-                                        <input
-                                          type="checkbox"
-                                          checked={Boolean(link.required)}
-                                          onChange={(event) => {
-                                            void handleUpdateCustomizationLink(link, { required: event.target.checked });
-                                          }}
-                                        />
-                                      </td>
-                                      <td>
-                                        <input
-                                          type="number"
-                                          min="1"
-                                          step="1"
-                                          value={String(Number(link.max_select) || 1)}
-                                          onChange={(event) => {
-                                            void handleUpdateCustomizationLink(link, { max_select: Number(event.target.value) || 1 });
-                                          }}
-                                        />
-                                      </td>
-                                      <td>
-                                        <input
-                                          type="number"
-                                          step="1"
-                                          value={String(Number(link.sort_order) || 0)}
-                                          onChange={(event) => {
-                                            void handleUpdateCustomizationLink(link, { sort_order: Number(event.target.value) || 0 });
-                                          }}
-                                        />
-                                      </td>
-                                      <td className="barista-menu-actions">
-                                        <button
-                                          type="button"
-                                          className="barista-danger-btn"
-                                          onClick={() => handleUnlinkCustomizationOption(link)}
-                                        >
-                                          Unlink
-                                        </button>
-                                      </td>
-                                    </tr>
-                                  );
-                                })
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </article>
                   </div>
-                </>
+
+                  <div className="barista-customization-split-pane-right">
+                    <label className="barista-customization-drink-selector-label" htmlFor="customizationMenuItemSelect">
+                      Active Drink
+                    </label>
+                    <select
+                      id="customizationMenuItemSelect"
+                      className="barista-customization-drink-selector"
+                      value={activeCustomizationMenuItemId}
+                      onChange={(event) => {
+                        setActiveCustomizationMenuItemId(event.target.value);
+                        setCustomizationLinkForm(EMPTY_CUSTOMIZATION_LINK_FORM);
+                      }}
+                      disabled={menuItems.length === 0}
+                    >
+                      {menuItems.length > 0 ? (
+                        menuItems.map((menuItem) => (
+                          <option key={menuItem.id} value={menuItem.id}>
+                            {menuItem.name}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">No menu items available</option>
+                      )}
+                    </select>
+
+                    <div className="barista-customization-linked-options">
+                      {customizationOptions.length === 0 ? (
+                        <p className="barista-customization-no-linked">No customization options available. Create one to get started.</p>
+                      ) : (
+                        <div className="barista-customization-unified-grid">
+                          {customizationOptions.map((option) => {
+                            const linkedOption = (customizationLinksByMenuItem[activeCustomizationMenuItemId] ?? []).find(
+                              (link) => link.option_id === option.id
+                            );
+                            const isLinked = Boolean(linkedOption);
+
+                            return (
+                              <div key={option.id} className="barista-customization-option-card-with-toggle">
+                                <div className="barista-customization-card-content">
+                                  <h4 className="barista-customization-card-name">{option.name}</h4>
+                                  <p className="barista-customization-card-type">
+                                    {formatMenuCategoryLabel(option.option_type)}
+                                  </p>
+                                  <p className="barista-customization-card-cost">
+                                    {formatCurrency(parseMoney(option.extra_cost))}
+                                  </p>
+                                </div>
+
+                                <div className="barista-customization-card-controls">
+                                  <button
+                                    type="button"
+                                    className={`barista-customization-toggle-switch ${isLinked ? "barista-customization-toggle-switch-on" : ""}`}
+                                    onClick={() => handleToggleCustomizationLink(option.id)}
+                                    aria-label={isLinked ? `Unlink ${option.name}` : `Link ${option.name}`}
+                                    title={isLinked ? "Click to unlink" : "Click to link"}
+                                    disabled={!activeCustomizationMenuItemId}
+                                  >
+                                    <span className="barista-customization-toggle-switch-thumb" />
+                                  </button>
+
+                                  {isLinked && linkedOption && (
+                                    <label className="barista-customization-required-toggle-inline">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(linkedOption.required)}
+                                        onChange={(event) => {
+                                          void handleUpdateCustomizationLink(linkedOption, { required: event.target.checked });
+                                        }}
+                                      />
+                                      <span>Required?</span>
+                                    </label>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               )}
             </section>
           ) : null}
@@ -4021,7 +4073,7 @@ export default function AdminDashboardPage() {
             className="barista-image-modal barista-manager-modal"
             role="dialog"
             aria-modal="true"
-            aria-label={editingItem ? `Edit ${editingItem.name}` : "Add new drink"}
+            aria-label={editingItem ? `Edit ${editingItem.name}` : "Add New Drink"}
             onClick={(event) => event.stopPropagation()}
           >
             <header className="barista-image-modal-head">
@@ -4190,7 +4242,7 @@ export default function AdminDashboardPage() {
             className="barista-image-modal barista-manager-modal barista-category-manager-modal"
             role="dialog"
             aria-modal="true"
-            aria-label={editingCategory ? `Edit ${editingCategory.label}` : "Add new category"}
+            aria-label={editingCategory ? `Edit ${editingCategory.label}` : "Add New Category"}
             onClick={(event) => event.stopPropagation()}
           >
             <header className="barista-image-modal-head">
@@ -4266,7 +4318,17 @@ export default function AdminDashboardPage() {
                           </button>
 
                           <div className="barista-category-manager-copy">
-                            <strong>{category.label}</strong>
+                            <strong>
+                              {category.icon_svg ? (
+                                <img
+                                  src={svgMarkupToDataUri(category.icon_svg)}
+                                  alt=""
+                                  aria-hidden="true"
+                                  className="barista-category-inline-icon"
+                                />
+                              ) : null}
+                              <span>{category.label}</span>
+                            </strong>
                             <span>
                               Key: {category.key} | {category.active === false ? "Hidden" : "Visible"}
                             </span>
@@ -4330,6 +4392,43 @@ export default function AdminDashboardPage() {
                   <span>Show category in the menu</span>
                 </label>
 
+                <label className="barista-form-field barista-form-field-full" htmlFor="menuCategoryIconSvg">
+                  Category SVG Icon (Optional)
+                  <textarea
+                    id="menuCategoryIconSvg"
+                    value={categoryForm.iconSvg}
+                    onChange={(event) =>
+                      setCategoryForm((previousForm) => ({
+                        ...previousForm,
+                        iconSvg: event.target.value
+                      }))
+                    }
+                    placeholder="Paste SVG markup here"
+                    rows={4}
+                  />
+                </label>
+
+                <div className="barista-manager-actions barista-form-field-full">
+                  <label className="barista-logout-btn barista-upload-btn" htmlFor="menuCategoryIconUpload">
+                    Upload SVG
+                    <input
+                      id="menuCategoryIconUpload"
+                      type="file"
+                      accept=".svg,image/svg+xml"
+                      onChange={handleCategoryIconUpload}
+                      disabled={isSavingCategory}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="barista-logout-btn"
+                    onClick={() => setCategoryForm((previousForm) => ({ ...previousForm, iconSvg: "" }))}
+                    disabled={isSavingCategory || !categoryForm.iconSvg.trim()}
+                  >
+                    Remove Icon
+                  </button>
+                </div>
+
                 {editingCategory ? (
                   <p className="barista-image-helper barista-form-field-full">
                     Editing category key: {editingCategory.key}
@@ -4363,13 +4462,13 @@ export default function AdminDashboardPage() {
             className="barista-image-modal barista-manager-modal"
             role="dialog"
             aria-modal="true"
-            aria-label={editingCustomizationOption ? `Edit ${editingCustomizationOption.name}` : "Add customization option"}
+            aria-label={editingCustomizationOption ? `Edit ${editingCustomizationOption.name}` : "Create customization option"}
             onClick={(event) => event.stopPropagation()}
           >
             <header className="barista-image-modal-head">
               <div>
                 <p className="barista-dashboard-kicker">Menu Customizations</p>
-                <h3>{editingCustomizationOption ? "Edit Option" : "Add Option"}</h3>
+                <h3>{editingCustomizationOption ? "Edit Option" : "Create Option"}</h3>
               </div>
 
               <button
@@ -4469,9 +4568,35 @@ export default function AdminDashboardPage() {
                     ? "Saving..."
                     : editingCustomizationOption
                       ? "Update Option"
-                      : "Add Option"}
+                      : "Create Option"}
                 </button>
               </div>
+
+              {editingCustomizationOption ? (
+                <div className="barista-customization-option-actions" aria-label="Customization option quick actions">
+                  <button
+                    type="button"
+                    className="barista-menu-image-btn"
+                    onClick={() =>
+                      openCustomizationLinkModal(activeCustomizationMenuItemId || undefined, editingCustomizationOption.id)
+                    }
+                    disabled={
+                      !activeCustomizationMenuItemId ||
+                      !linkableCustomizationOptions.some((entry) => entry.id === editingCustomizationOption.id)
+                    }
+                  >
+                    Link to Drink
+                  </button>
+
+                  <button
+                    type="button"
+                    className="barista-danger-btn"
+                    onClick={() => handleDeleteCustomizationOption(editingCustomizationOption)}
+                  >
+                    Delete Option
+                  </button>
+                </div>
+              ) : null}
             </form>
           </section>
         </div>
@@ -4548,41 +4673,6 @@ export default function AdminDashboardPage() {
                       </option>
                     ))}
                   </select>
-                </label>
-
-                <label className="barista-form-field" htmlFor="customizationLinkMaxSelect">
-                  Max Select
-                  <input
-                    id="customizationLinkMaxSelect"
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={customizationLinkForm.maxSelect}
-                    onChange={(event) =>
-                      setCustomizationLinkForm((previousForm) => ({
-                        ...previousForm,
-                        maxSelect: event.target.value
-                      }))
-                    }
-                    required
-                  />
-                </label>
-
-                <label className="barista-form-field" htmlFor="customizationLinkSortOrder">
-                  Sort Order
-                  <input
-                    id="customizationLinkSortOrder"
-                    type="number"
-                    step="1"
-                    value={customizationLinkForm.sortOrder}
-                    onChange={(event) =>
-                      setCustomizationLinkForm((previousForm) => ({
-                        ...previousForm,
-                        sortOrder: event.target.value
-                      }))
-                    }
-                    required
-                  />
                 </label>
 
                 <label className="barista-form-field barista-form-field-toggle barista-form-field-full" htmlFor="customizationLinkRequired">

@@ -8,9 +8,13 @@ create table if not exists public.menu_categories (
   label text not null,
   sort_order integer not null default 0,
   active boolean not null default true,
+  icon_svg text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.menu_categories
+  add column if not exists icon_svg text;
 
 -- Seed initial categories
 insert into public.menu_categories (key, label, sort_order, active)

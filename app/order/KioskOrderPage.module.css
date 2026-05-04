@@ -238,6 +238,10 @@
   transition: transform 190ms ease, box-shadow 190ms ease, border-color 190ms ease;
 }
 
+.productCardNoImage {
+  min-height: 0;
+}
+
 .productCard:hover,
 .productCard:focus-within {
   transform: translateY(-2px);
@@ -256,18 +260,14 @@
   object-fit: cover;
 }
 
-.productPlaceholder {
-  height: 100%;
-  display: grid;
-  place-items: center;
-  color: rgba(35, 38, 59, 0.6);
-  font-size: 0.78rem;
-}
-
 .productBody {
   display: grid;
   gap: 0.36rem;
   padding: 0.55rem 0.62rem;
+}
+
+.productCardNoImage .productBody {
+  padding-top: 0.75rem;
 }
 
 .productCategory {
@@ -306,7 +306,6 @@
 }
 
 .quickAddButton,
-.customizeButton,
 .viewCartButton {
   min-height: 2.45rem;
   border-radius: 0.72rem;
@@ -319,19 +318,9 @@
     border-color 170ms ease,
     background-color 170ms ease,
     color 170ms ease;
-}
-
-.quickAddButton,
-.viewCartButton {
   border: 0;
   background: var(--brand-brown);
   color: var(--brand-white);
-}
-
-.customizeButton {
-  border: 1px solid rgba(35, 38, 59, 0.24);
-  background: transparent;
-  color: var(--brand-brown);
 }
 
 .quickAddButton:hover,
@@ -344,17 +333,7 @@
   outline: none;
 }
 
-.customizeButton:hover,
-.customizeButton:focus-visible {
-  transform: translateY(-1px);
-  background: rgba(35, 38, 59, 0.08);
-  border-color: rgba(35, 38, 59, 0.44);
-  box-shadow: 0 8px 14px rgba(35, 38, 59, 0.14);
-  outline: none;
-}
-
 .quickAddButton:active,
-.customizeButton:active,
 .viewCartButton:active,
 .categoryButton:active,
 .heroCard button:active {
@@ -484,7 +463,7 @@
 .skeletonShimmer {
   position: relative;
   overflow: hidden;
-  background: rgba(35, 38, 59, 0.12);
+  background: var(--color-skeleton-base);
   border-radius: 0.5rem;
 }
 
@@ -493,7 +472,12 @@
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-skeleton-highlight) 90%, transparent) 50%,
+    transparent 100%
+  );
   animation: kioskSkeletonSweep 1.25s ease-in-out infinite;
 }
 
@@ -641,7 +625,7 @@
   min-width: 9.6rem;
   min-height: 2.45rem;
   border-radius: 0.9rem;
-  background: rgba(91, 95, 141, 0.75);
+  background: var(--color-skeleton-base);
 }
 
 @media (max-width: 460px) {
@@ -728,7 +712,6 @@
   .heroCard button,
   .productCard,
   .quickAddButton,
-  .customizeButton,
   .viewCartButton,
   .desktopViewCartFab {
     transition: none;

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import localFont from "next/font/local";
 import "./globals.css";
+import siteLogo from "../asset/logo/GRIT COFFEE LOGO_no_text_kyoto_dusk.png";
 
 const neueMontreal = localFont({
   src: [
@@ -34,6 +35,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en" className={neueMontreal.variable}>
+      <head>
+        <link rel="icon" href={siteLogo.src} />
+      </head>
       <body className={neueMontreal.className}>
         {children}
         {isProduction ? <Analytics /> : null}

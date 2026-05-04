@@ -125,7 +125,7 @@ function mapMenuRowToItemWithOptions(row: MenuItemRow, options: MenuItemCustomiz
   return {
     id: row.id,
     name: row.name,
-    description: row.description?.trim() || "Crafted fresh for your next coffee break.",
+    description: row.description?.trim() || "",
     price: safeSoloPrice,
     priceSolo: safeSoloPrice,
     priceDoppio: safeDoppioPrice,

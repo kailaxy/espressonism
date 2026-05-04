@@ -219,9 +219,9 @@ export default function KioskOrderPage({
                   const quantity = quantities[item.id] ?? 0;
 
                   return (
-                    <article key={item.id} className={styles.productCard}>
-                      <div className={styles.productMedia}>
-                        {item.imageUrl ? (
+                    <article key={item.id} className={`${styles.productCard} ${item.imageUrl ? "" : styles.productCardNoImage}`}>
+                      {item.imageUrl ? (
+                        <div className={styles.productMedia}>
                           <Image
                             src={item.imageUrl}
                             alt={item.name}
@@ -229,24 +229,19 @@ export default function KioskOrderPage({
                             sizes="(max-width: 767px) 48vw, (max-width: 1279px) 24vw, 16vw"
                             unoptimized
                           />
-                        ) : (
-                          <div className={styles.productPlaceholder}>No image</div>
-                        )}
-                      </div>
+                        </div>
+                      ) : null}
 
                       <div className={styles.productBody}>
                         <p className={styles.productCategory}>{item.category}</p>
                         <h3>{item.name}</h3>
-                        <p className={styles.productDescription}>{item.description}</p>
+                        {item.description?.trim() ? <p className={styles.productDescription}>{item.description}</p> : null}
                         <p className={styles.productPrice}>{formatPeso(item.price)}</p>
                       </div>
 
                       <div className={styles.productActions}>
-                        <button type="button" className={styles.quickAddButton} onClick={() => onQuickAdd(item)}>
-                          Add
-                        </button>
-                        <button type="button" className={styles.customizeButton} onClick={() => onCustomize(item)}>
-                          Customize
+                        <button type="button" className={styles.quickAddButton} onClick={() => onCustomize(item)}>
+                          Order
                         </button>
                       </div>
 

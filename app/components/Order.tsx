@@ -182,9 +182,9 @@ export function MenuGrid({ items, quantities, onSelectItem }: MenuGridProps) {
         const quantity = quantities[item.id] ?? 0;
 
         return (
-          <article key={item.id} className="order-menu-card-v2">
-            <div className="order-item-image-frame" aria-hidden={!item.imageUrl}>
-              {item.imageUrl ? (
+          <article key={item.id} className={`order-menu-card-v2 ${item.imageUrl ? "" : "order-menu-card-v2-no-image"}`}>
+            {item.imageUrl ? (
+              <div className="order-item-image-frame" aria-hidden={false}>
                 <Image
                   src={optimizeMenuImageSource(item.imageUrl, 960)}
                   alt={item.name}
@@ -193,13 +193,11 @@ export function MenuGrid({ items, quantities, onSelectItem }: MenuGridProps) {
                   sizes="(max-width: 640px) 100vw, (max-width: 830px) 50vw, (max-width: 1280px) 33vw, 300px"
                   unoptimized
                 />
-              ) : (
-                <span className="order-item-image-placeholder">No image</span>
-              )}
-            </div>
+              </div>
+            ) : null}
             <p className="order-item-category">{item.category}</p>
             <h3>{item.name}</h3>
-            <p className="order-item-description">{item.description}</p>
+            {item.description?.trim() ? <p className="order-item-description">{item.description}</p> : null}
             {item.note ? <p className="order-item-note">{item.note}</p> : null}
 
             <div className="order-card-footer">
